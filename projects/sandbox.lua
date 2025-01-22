@@ -10,8 +10,8 @@ project "Sandbox"
 
     includedirs {
         "include",
-        "external/lua/src",          -- Include directory for Lua
-        "external/luasocket/src"     -- Include directory for LuaSocket
+        "external/lua",          -- Include directory for Lua
+        "external/luasocket/src" -- Include directory for LuaSocket
     }
 
     links { "LuaCore", "LuaSocket" } -- Link with LuaCore and LuaSocket

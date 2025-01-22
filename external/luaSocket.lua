@@ -1,13 +1,13 @@
 project "LuaSocket"
     location "external/luasocket"
-    kind "StaticLib"
+    kind "SharedLib"
     language "C"
     targetdir "bin/%{cfg.buildcfg}"
     objdir "bin-int/%{cfg.buildcfg}"
 
-    files { "external/luasocket/src/**.c", "external/luasocket/src/**.h" }
+    files { "luasocket/src/**.c", "luasocket/src/**.h" }
 
-    includedirs { "external/lua/src", "external/luasocket/src" }
+    includedirs { "lua/src", "luasocket/src" }
 
     filter "system:windows"
         systemversion "latest"

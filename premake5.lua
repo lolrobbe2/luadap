@@ -5,6 +5,6 @@ workspace "MyProject"
     -- Include projects
     include "projects/sandbox.lua"
     group "core"
-    include "projects/luaCore.lua"
-    include "projects/luaSocket.lua"
+    include "external/luaCore.lua"
+    include "external/luaSocket.lua"
     group ""
