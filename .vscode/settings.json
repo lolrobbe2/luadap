@@ -1,3 +1,4 @@
 {
-    "premake.version": "latest"
+    "premake.version": "latest",
+    "premake.action": "vs2022"
 }

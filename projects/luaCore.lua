@@ -1,4 +1,5 @@
 project "LuaCore"
+    location "external/lua"
     kind "StaticLib"
     language "C"
     targetdir "bin/%{cfg.buildcfg}"

@@ -1,4 +1,5 @@
 project "Sandbox"
+    location "projects/sandbox"
     kind "ConsoleApp"
     language "C++"
     cppdialect "C++17"

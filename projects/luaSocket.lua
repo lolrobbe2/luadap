@@ -1,4 +1,5 @@
 project "LuaSocket"
+    location "external/luasocket"
     kind "StaticLib"
     language "C"
     targetdir "bin/%{cfg.buildcfg}"
