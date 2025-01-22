@@ -5,9 +5,15 @@ project "LuaCore"
     targetdir "bin/%{cfg.buildcfg}"
     objdir "bin-int/%{cfg.buildcfg}"
 
-    files { "lua/**.c", "lua/**.h" }
+    files { "../external/lua/src/**.c", "../external/lua/src/**.h" }
+	excludes
+	{
+		"../external/lua/src/lua.c",
+		"../external/lua/src/luac.c",
+		"../external/lua/src/print.c",
+	}
 
-    includedirs { "lua/src" }
+    includedirs { "../external/lua/src" }
 
     filter "system:windows"
         systemversion "latest"

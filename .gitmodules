@@ -1,6 +1,3 @@
-[submodule "external/lua"]
-	path = external/lua
-	url = https://github.com/lua/lua.git
 [submodule "external/luasocket"]
 	path = external/luasocket
 	url = https://github.com/diegonehab/luasocket.git

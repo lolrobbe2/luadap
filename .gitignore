@@ -36,3 +36,9 @@ projects/projects/**
 .vs/**
 *.sln
 *.vcxproj
+projects/bin/**
+projects/bin-int/**
+external/bin/**
+external/bin-int/**
+external/obj/**
+*.filters

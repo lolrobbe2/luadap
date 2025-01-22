@@ -1,6 +1,9 @@
 #include <iostream>
-#include <lua.hpp>
-
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+#include <lualib.h>
+}
 // Error handling function
 void report_errors(lua_State* L, int status) {
     if (status != LUA_OK) {
@@ -10,11 +13,11 @@ void report_errors(lua_State* L, int status) {
 }
 
 int main() {
-    lua_State *L = luaL_newstate();  // Create a new Lua state
+    lua_State* L = luaL_newstate();  // Create a new Lua state
     luaL_openlibs(L);                // Load Lua libraries
 
     // Load and execute the main.lua script
-    int status = luaL_loadfile(L, "main.lua");
+    int status = luaL_loadfile(L, "main.lua");  // Adjust path to main.lua
     if (status == LUA_OK) {
         status = lua_pcall(L, 0, 0, 0);
     }
