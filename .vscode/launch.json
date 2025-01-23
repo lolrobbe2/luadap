@@ -1,0 +1,12 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "luadap",
+            "name": "Launch Sandbox",
+            "request": "attach",
+            "host": "localhost",
+            "port": 3000
+        }
+    ]
+}

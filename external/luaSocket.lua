@@ -1,4 +1,4 @@
-project "LuaSocket"
+project "luasocket"
     location "external/luasocket"
     kind "SharedLib"  -- Ensure LuaSocket is built as a shared library
     language "C"

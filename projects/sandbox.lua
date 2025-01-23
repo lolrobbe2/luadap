@@ -1,4 +1,4 @@
-project "Sandbox"
+project "sandbox"
     location "projects/sandbox"
     kind "ConsoleApp"
     language "C++"

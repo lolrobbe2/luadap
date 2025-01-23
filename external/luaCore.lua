@@ -1,4 +1,4 @@
-project "LuaCore"
+project "luacore"
     location "external/lua"
     kind "StaticLib"
     language "C"
@@ -6,15 +6,14 @@ project "LuaCore"
     objdir "bin-int/%{cfg.buildcfg}"
 
     files { "../external/lua/src/**.c", "../external/lua/src/**.h" }
-	excludes
-	{
-		"../external/lua/src/lua.c",
-		"../external/lua/src/luac.c",
-		"../external/lua/src/print.c",
-	}
 
     includedirs { "../external/lua/src" }
-
+    excludes 
+    {
+        "../external/lua/src/lua.c",
+        "../external/lua/src/luac.c",
+        "../external/lua/src/print.c"
+    }
     filter "system:windows"
         systemversion "latest"
         defines { "LUA_CORE_WINDOWS" }

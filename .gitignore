@@ -42,3 +42,5 @@ external/bin/**
 external/bin-int/**
 external/obj/**
 *.filters
+/external/external/lua/luacore.vcxproj.user
+/external/external/luasocket/luasocket.vcxproj.user
