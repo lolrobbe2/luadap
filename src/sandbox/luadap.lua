@@ -891,6 +891,7 @@ end
 function LuadapClient:fromClientSocket(client)
     local self = setmetatable({}, LuadapClient)
     self.client = client
+    self.initialized = false;
     return self
 end
 function LuadapClient:connect(host, port)
@@ -967,6 +968,32 @@ function LuadapClient:receivePackage()
     end
 end
 
+function LuadapClient:sendPackage(package)
+  if self.client then
+    local json_data = json.encode(package)
+    local content_length = #json_data
+
+    -- Create the header with Content-Length
+    local header = "Content-Length: " .. content_length .. "\r\n\r\n"
+
+    -- Send the header and JSON data to the client
+    local success, err
+    success, err = self.client:send(header)
+    if not success then
+      print("Error sending header:", err)
+      return nil
+    end
+    success, err = self.client:send(json_data)
+    if not success then
+      print("Error sending data:", err)
+      return nil
+    end
+    print("Package sent successfully")
+  else
+    print("No client connected")
+  end
+end
+
 function LuadapClient:close()
     self.client:close()
 end
@@ -975,6 +1002,42 @@ function LuadapClient:settimeout(timeout)
     self.client:settimeout(timeout)
 end
 
+function LuadapClient:handleRequest(request)
+  if request.body.command == "attach" then
+    local attachResult = self:handleAttach(request.body)
+    if attachResult == true then
+      return AttachResponse:new(request.seq, request.seq, true, "")
+    else
+      return attachResult
+    end
+  end
+  print_nicely(request.body)
+end
+
+function LuadapClient:handleAttach(requestBody)
+  self.sessionInfo = {}
+  self.sessionInfo.sessionId = requestBody.arguments.__sessionId
+  self.sessionInfo.name = requestBody.arguments.name
+  self.sessionInfo.type = requestBody.arguments.type
+  self.sessionInfo.host = requestBody.arguments.host
+  self.sessionInfo.port = requestBody.arguments.port
+
+  if self.sessionInfo.type ~= "luadap" then
+    local error_info = {
+      id = 1,
+      format = "Expected type 'luadap'",
+      variables = {},
+      sendTelemetry = true,
+      showUser = true,
+      url = "",
+      urlLabel = ""
+    }
+    local errorResponse = ErrorResponse:new(2, 2, false, "attach","Invalid type", error_info)
+    print_nicely(errorResponse)
+    return errorResponse
+  end
+  return true
+end
 
 function Luadap.start(host, port)
   dap_server = LuadapServer:new(host, port)
@@ -993,12 +1056,206 @@ function Luadap.start(host, port)
   }
   print_nicely(info_table)
 
-  debug.sethook(, "l")
+  local capabilities = {
+    supportsConfigurationDoneRequest = true,
+    supportsFunctionBreakpoints = true,
+    supportsConditionalBreakpoints = true,
+    supportsHitConditionalBreakpoints = true,
+  }
+
+  local response = InitializeResponse:new(initialize.seq, initialize.seq, true, "", capabilities)
+
+  dap_client:sendPackage(response);
+  while not dap_client.initialized do
+    local request = dap_client:receivePackage()
+    local response = dap_client:handleRequest(request)
+    print_nicely(response)
+    dap_client:sendPackage(response)
+  end
+  debug.sethook(Luadap.debughook, "l")
 end
 
-function Luadap.debughook(event, line) {
 
-}
+
+
+ProtocolMessage = {}
+ProtocolMessage.__index = ProtocolMessage
+
+-- Constructor for ProtocolMessage
+function ProtocolMessage:new(seq, type)
+    local instance = setmetatable({}, self)
+    instance.seq = seq or 1
+    instance.type = type or 'request'
+    return instance
+end
+
+-- Method to display the message details
+function ProtocolMessage:display()
+    print("Sequence Number: " .. self.seq)
+    print("Type: " .. self.type)
+end
+
+-- Derived class Request inheriting from ProtocolMessage
+Request = setmetatable({}, {__index = ProtocolMessage})
+Request.__index = Request
+
+function Request:new(seq, command, arguments)
+    local instance = ProtocolMessage.new(self, seq, 'request')
+    instance.command = command or ""
+    instance.arguments = arguments or {}
+    return instance
+end
+
+function Request:display()
+    ProtocolMessage.display(self)
+    print("Command: " .. self.command)
+    print("Arguments: " .. tostring(self.arguments))
+end
+
+-- Derived class Event inheriting from ProtocolMessage
+Event = setmetatable({}, {__index = ProtocolMessage})
+Event.__index = Event
+
+function Event:new(seq, event, body)
+    local instance = ProtocolMessage.new(self, seq, 'event')
+    instance.event = event or ""
+    instance.body = body or {}
+    return instance
+end
+
+function Event:display()
+    ProtocolMessage.display(self)
+    print("Event: " .. self.event)
+    print("Body: " .. tostring(self.body))
+end
+
+-- Derived class Response inheriting from ProtocolMessage
+Response = setmetatable({}, {__index = ProtocolMessage})
+Response.__index = Response
+
+function Response:new(seq, request_seq, success, command, message, body)
+    local instance = ProtocolMessage.new(self, seq, 'response')
+    instance.request_seq = request_seq or 1
+    instance.success = success or false
+    instance.command = command or ""
+    instance.message = message or ""
+    instance.body = body or {}
+    return instance
+end
+
+function Response:display()
+    ProtocolMessage.display(self)
+    print("Request Sequence Number: " .. self.request_seq)
+    print("Success: " .. tostring(self.success))
+    print("Command: " .. self.command)
+    print("Message: " .. self.message)
+    print("Body: " .. tostring(self.body))
+end
+
+-- Extend Response to create InitializeResponse
+InitializeResponse = setmetatable({}, { __index = Response })
+InitializeResponse.__index = InitializeResponse
+
+function InitializeResponse:new(seq, request_seq, success, message, capabilities)
+  -- Infer types and set default values
+  seq = seq or 1
+  request_seq = request_seq or 1
+  success = success or false
+  message = message or ""
+  capabilities = capabilities or {}
+
+  local instance = Response.new(self, seq, request_seq, success, "initialize", message, { capabilities = capabilities })
+  return instance
+end
+
+-- Derived class ErrorResponse inheriting from Response
+ErrorResponse = setmetatable({}, {__index = Response})
+ErrorResponse.__index = ErrorResponse
+
+function ErrorResponse:new(seq, request_seq, success, command, message, error)
+  local error_message = Message:new(
+    error.id,
+    error.format,
+    error.variables,
+    error.sendTelemetry,
+    error.showUser,
+    error.url,
+    error.urlLabel
+  )
+  local body = { error = error_message }
+  local instance = Response.new(self, seq, request_seq, success, command, message, body)
+  return instance
+end
+
+function ErrorResponse:display()
+    Response.display(self)
+    print("Error: " .. tostring(self.body.error))
+end
+
+-- Derived class CancelRequest inheriting from Request
+CancelRequest = setmetatable({}, {__index = Request})
+CancelRequest.__index = CancelRequest
+
+function CancelRequest:new(seq, arguments)
+    local instance = Request.new(self, seq, 'cancel', arguments)
+    return instance
+end
+
+function CancelRequest:display()
+    Request.display(self)
+end
+
+-- Derived class CancelResponse inheriting from Response
+CancelResponse = setmetatable({}, {__index = Response})
+CancelResponse.__index = CancelResponse
+
+function CancelResponse:new(seq, request_seq, success, command, message)
+    local instance = Response.new(self, seq, request_seq, success, command, message, nil)
+    return instance
+end
+
+function CancelResponse:display()
+    Response.display(self)
+end
+
+-- Define the Message type
+Message = {}
+Message.__index = Message
+
+function Message:new(id, format, variables, sendTelemetry, showUser, url, urlLabel)
+  local instance = setmetatable({}, Message)
+  instance.id = id or 0
+  instance.format = format or ""
+  instance.variables = variables or {}
+  instance.sendTelemetry = sendTelemetry or false
+  instance.showUser = showUser or false
+  instance.url = url or ""
+  instance.urlLabel = url or ""
+  return instance
+end
+
+-- Method to display the message
+function Message:display()
+  print("ID: " .. self.id)
+  print("Format: " .. self.format)
+  print("Variables: " .. tostring(self.variables))
+  print("Send Telemetry: " .. tostring(self.sendTelemetry))
+  print("Show User: " .. tostring(self.showUser))
+  print("URL: " .. self.url)
+  print("URL Label: " .. self.urlLabel)
+end
+-- Extend Response to create AttachResponse
+AttachResponse = setmetatable({}, { __index = Response })
+AttachResponse.__index = AttachResponse
+
+function AttachResponse:new(seq, request_seq, success, message)
+  local instance = Response.new(self, seq, request_seq, success, "attach", message, {})
+  return instance
+end
+
+function Luadap.debughook(event, line)
+
+end
 
 
 
