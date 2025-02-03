@@ -1003,15 +1003,32 @@ function LuadapClient:settimeout(timeout)
 end
 
 function LuadapClient:handleRequest(request)
-  if request.body.command == "attach" then
+  if request.body.command == "initialize" then
+
+    if request.body.arguments.adapterID ~= "luadap" then
+      print("client does not have correct adapterID, expected luadap but was: " .. request.body.arguments.adapterID)
+      return nil
+    end
+    local info_table = {
+      clientID = request.body.arguments.clientID,
+      clientName = request.body.arguments.clientName,
+      adapterID = request.body.arguments.adapterID,
+    }
+    print_nicely(info_table)
+    local capabilities = {
+      supportsConfigurationDoneRequest = true,
+    }
+    return InitializeResponse:new(request.seq, request.seq, true, "", capabilities)
+  elseif request.body.command == "attach" then
     local attachResult = self:handleAttach(request.body)
     if attachResult == true then
-      return AttachResponse:new(request.seq, request.seq, true, "")
+      return AttachResponse:new(request.seq, request.seq, true)
     else
-      return attachResult
+      attachResult.seq = request.seq
+      attachResult.request_seq = request.seq
+      return 
     end
   end
-  print_nicely(request.body)
 end
 
 function LuadapClient:handleAttach(requestBody)
@@ -1026,11 +1043,8 @@ function LuadapClient:handleAttach(requestBody)
     local error_info = {
       id = 1,
       format = "Expected type 'luadap'",
-      variables = {},
       sendTelemetry = true,
       showUser = true,
-      url = "",
-      urlLabel = ""
     }
     local errorResponse = ErrorResponse:new(2, 2, false, "attach","Invalid type", error_info)
     print_nicely(errorResponse)
@@ -1044,30 +1058,11 @@ function Luadap.start(host, port)
   print("lua Debug Adapter Server waiting for client to connect!")
   dap_client = dap_server:accept()
   print("client connected, waiting for initialize request")
-  local initialize = dap_client:receivePackage()
-  if initialize.body.arguments.adapterID ~= "luadap" then
-      print("client does not have correct adapterID, expected luadap but was: " .. initialize.body.arguments.adapterID)
-      return nil
-  end
-  local info_table = {
-    clientID = initialize.body.arguments.clientID,
-    clientName = initialize.body.arguments.clientName,
-    adapterID = initialize.body.arguments.adapterID,
-  }
-  print_nicely(info_table)
 
-  local capabilities = {
-    supportsConfigurationDoneRequest = true,
-    supportsFunctionBreakpoints = true,
-    supportsConditionalBreakpoints = true,
-    supportsHitConditionalBreakpoints = true,
-  }
 
-  local response = InitializeResponse:new(initialize.seq, initialize.seq, true, "", capabilities)
-
-  dap_client:sendPackage(response);
   while not dap_client.initialized do
     local request = dap_client:receivePackage()
+    print_nicely(request.body)
     local response = dap_client:handleRequest(request)
     print_nicely(response)
     dap_client:sendPackage(response)
@@ -1118,8 +1113,8 @@ Event.__index = Event
 
 function Event:new(seq, event, body)
     local instance = ProtocolMessage.new(self, seq, 'event')
-    instance.event = event or ""
-    instance.body = body or {}
+    instance.event = event
+    instance.body = body
     return instance
 end
 
@@ -1137,9 +1132,9 @@ function Response:new(seq, request_seq, success, command, message, body)
     local instance = ProtocolMessage.new(self, seq, 'response')
     instance.request_seq = request_seq or 1
     instance.success = success or false
-    instance.command = command or ""
-    instance.message = message or ""
-    instance.body = body or {}
+    instance.command = command
+    instance.message = message
+    instance.body = body
     return instance
 end
 
@@ -1155,13 +1150,13 @@ end
 -- Extend Response to create InitializeResponse
 InitializeResponse = setmetatable({}, { __index = Response })
 InitializeResponse.__index = InitializeResponse
-
+-- TODO need to send initialized event
 function InitializeResponse:new(seq, request_seq, success, message, capabilities)
   -- Infer types and set default values
   seq = seq or 1
   request_seq = request_seq or 1
-  success = success or false
-  message = message or ""
+  success = success
+  message = message
   capabilities = capabilities or {}
 
   local instance = Response.new(self, seq, request_seq, success, "initialize", message, { capabilities = capabilities })
@@ -1224,13 +1219,13 @@ Message.__index = Message
 
 function Message:new(id, format, variables, sendTelemetry, showUser, url, urlLabel)
   local instance = setmetatable({}, Message)
-  instance.id = id or 0
-  instance.format = format or ""
-  instance.variables = variables or {}
+  instance.id = id
+  instance.format = format
+  instance.variables = variables
   instance.sendTelemetry = sendTelemetry or false
   instance.showUser = showUser or false
-  instance.url = url or ""
-  instance.urlLabel = url or ""
+  instance.url = url
+  instance.urlLabel = url
   return instance
 end
 
@@ -1249,7 +1244,7 @@ AttachResponse = setmetatable({}, { __index = Response })
 AttachResponse.__index = AttachResponse
 
 function AttachResponse:new(seq, request_seq, success, message)
-  local instance = Response.new(self, seq, request_seq, success, "attach", message, {})
+  local instance = Response.new(self, seq, request_seq, success, "attach", message)
   return instance
 end
 
