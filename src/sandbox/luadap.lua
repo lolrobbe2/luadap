@@ -1066,6 +1066,9 @@ function Luadap.start(host, port)
     local response = dap_client:handleRequest(request)
     print_nicely(response)
     dap_client:sendPackage(response)
+    if response.command == "initialize" then
+      dap_client:sendPackage(Event:new(1, "initialized"))
+    end
   end
   debug.sethook(Luadap.debughook, "l")
 end
