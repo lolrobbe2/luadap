@@ -972,7 +972,7 @@ function LuadapClient:sendPackage(package)
   if self.client then
     local json_data = json.encode(package)
     local content_length = #json_data
-
+    print(json_data)
     -- Create the header with Content-Length
     local header = "Content-Length: " .. content_length .. "\r\n\r\n"
 
@@ -1018,16 +1018,18 @@ function LuadapClient:handleRequest(request)
     local capabilities = {
       supportsConfigurationDoneRequest = true,
     }
-    return InitializeResponse:new(request.seq, request.seq, true, "", capabilities)
+    return InitializeResponse:new(request.body.seq, request.body.seq, true, "", capabilities)
   elseif request.body.command == "attach" then
     local attachResult = self:handleAttach(request.body)
     if attachResult == true then
-      return AttachResponse:new(request.seq, request.seq, true)
+      return AttachResponse:new(request.body.seq, request.body.seq, true)
     else
-      attachResult.seq = request.seq
-      attachResult.request_seq = request.seq
-      return 
+      attachResult.seq = request.body.seq
+      attachResult.request_seq = request.body.seq
+      return
     end
+  elseif request.body.command == "setExceptionBreakpoints" then
+    return SetExceptionBreakpointsResponse:new(request.body.seq, request.body.seq, true)
   end
 end
 
@@ -1067,13 +1069,31 @@ function Luadap.start(host, port)
     print_nicely(response)
     dap_client:sendPackage(response)
     if response.command == "initialize" then
-      dap_client:sendPackage(Event:new(1, "initialized"))
+      dap_client:sendPackage(Event:new(request.body.seq, "initialized"))
     end
   end
   debug.sethook(Luadap.debughook, "l")
 end
 
+-- PROTOCOL TYPES --
+Thread = {}
+Thread.__index = Thread
 
+-- Constructor for Thread
+function Thread:new(id, name)
+  local instance = setmetatable({}, self)
+  instance.id = id or 0
+  instance.name = name or ""
+  return instance
+end
+
+-- Method to display the thread details
+function Thread:display()
+  print("Thread ID: " .. self.id)
+  print("Thread Name: " .. self.name)
+end
+
+-- PROTOCOL MESSAGE OBJECTS --
 
 
 ProtocolMessage = {}
@@ -1251,6 +1271,15 @@ function AttachResponse:new(seq, request_seq, success, message)
   return instance
 end
 
+
+SetExceptionBreakpointsResponse = setmetatable({}, { __index = Response })
+SetExceptionBreakpointsResponse.__index = SetExceptionBreakpointsResponse
+
+function SetExceptionBreakpointsResponse:new(seq, request_seq, success, message)
+  print(seq)
+  local instance = Response.new(self, seq, request_seq, success, "setExceptionBreakpoints", message,nil)
+  return instance
+end
 function Luadap.debughook(event, line)
 
 end
