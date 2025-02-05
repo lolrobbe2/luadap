@@ -1019,6 +1019,7 @@ function LuadapClient:handleRequest(request)
       supportsConfigurationDoneRequest = true,
     }
     return InitializeResponse:new(request.body.seq, request.body.seq, true, "", capabilities)
+  -- ATTACH ==================================================================
   elseif request.body.command == "attach" then
     local attachResult = self:handleAttach(request.body)
     if attachResult == true then
@@ -1028,8 +1029,14 @@ function LuadapClient:handleRequest(request)
       attachResult.request_seq = request.body.seq
       return
     end
+  -- SetExceptionBreakpoints =================================================
   elseif request.body.command == "setExceptionBreakpoints" then
     return SetExceptionBreakpointsResponse:new(request.body.seq, request.body.seq, true)
+  -- Threading ===============================================================
+  elseif request.body.command == "threads" then
+    -- lua is not multithreaded, so return 1 thread
+    local mainRoutine = Thread:new(1, "Main Routine")
+    return ThreadsResponse:new(request.body.seq, request.body.seq, true, { mainRoutine })
   end
 end
 
@@ -1280,6 +1287,26 @@ function SetExceptionBreakpointsResponse:new(seq, request_seq, success, message)
   local instance = Response.new(self, seq, request_seq, success, "setExceptionBreakpoints", message,nil)
   return instance
 end
+
+-- ThreadsResponse class inheriting from Response
+ThreadsResponse = setmetatable({}, { __index = Response })
+ThreadsResponse.__index = ThreadsResponse
+
+function ThreadsResponse:new(seq, request_seq, success, threads, message)
+  local body = { threads = threads or {} }
+  local instance = Response.new(self, seq, request_seq, success, "threads", message, body)
+  return instance
+end
+
+function ThreadsResponse:display()
+  Response.display(self)
+  if self.body.threads then
+    for _, thread in ipairs(self.body.threads) do
+      thread:display()
+    end
+  end
+end
+
 function Luadap.debughook(event, line)
 
 end
