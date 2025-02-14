@@ -1040,6 +1040,13 @@ function LuadapClient:handleRequest(request)
   end
 end
 
+function LuadapClient:send_event(command,seq)
+  if command == "initialize" then
+    self:sendPackage(Event:new(seq, "initialized"))
+  end
+  
+end
+
 function LuadapClient:handleAttach(requestBody)
   self.sessionInfo = {}
   self.sessionInfo.sessionId = requestBody.arguments.__sessionId
@@ -1075,9 +1082,7 @@ function Luadap.start(host, port)
     local response = dap_client:handleRequest(request)
     print_nicely(response)
     dap_client:sendPackage(response)
-    if response.command == "initialize" then
-      dap_client:sendPackage(Event:new(request.body.seq, "initialized"))
-    end
+    dap_client:send_event(request.body.command,request.body.seq)
   end
   debug.sethook(Luadap.debughook, "l")
 end
@@ -1153,7 +1158,26 @@ function Event:display()
     print("Event: " .. self.event)
     print("Body: " .. tostring(self.body))
 end
+-- ThreadEvent class inheriting from Event
+ThreadEvent = setmetatable({}, { __index = Event })
+ThreadEvent.__index = ThreadEvent
 
+-- Constructor for ThreadEvent
+function ThreadEvent:new(seq, reason, threadId)
+  local body = {
+    reason = reason or "",
+    threadId = threadId or 0
+  }
+  local instance = Event.new(self, seq, 'thread', body)
+  return instance
+end
+
+-- Method to display the thread event details
+function ThreadEvent:display()
+  Event.display(self)
+  print("Reason: " .. self.body.reason)
+  print("Thread ID: " .. self.body.threadId)
+end
 -- Derived class Response inheriting from ProtocolMessage
 Response = setmetatable({}, {__index = ProtocolMessage})
 Response.__index = Response
@@ -1180,7 +1204,7 @@ end
 -- Extend Response to create InitializeResponse
 InitializeResponse = setmetatable({}, { __index = Response })
 InitializeResponse.__index = InitializeResponse
--- TODO need to send initialized event
+
 function InitializeResponse:new(seq, request_seq, success, message, capabilities)
   -- Infer types and set default values
   seq = seq or 1
@@ -1189,7 +1213,7 @@ function InitializeResponse:new(seq, request_seq, success, message, capabilities
   message = message
   capabilities = capabilities or {}
 
-  local instance = Response.new(self, seq, request_seq, success, "initialize", message, { capabilities = capabilities })
+  local instance = Response.new(self, seq, request_seq, success, "initialize", message, { Capabilities = capabilities })
   return instance
 end
 
