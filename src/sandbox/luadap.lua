@@ -918,11 +918,6 @@ function LuadapClient:receive(pattern)
     return data
 end
 
-function LuadapClient:hasData()
-  local readable, _, _ = socket.select({self.client}, nil, 0)
-  print(#readable)
-  return #readable > 0
-end
 function LuadapClient:receivePackage()
     if self.client then
         -- Receive the header
@@ -982,11 +977,19 @@ function LuadapClient:receivePackageNonBlocking()
       -- Receive the header
       local header = {}
       local line, err = self.client:receive("*l")
-      if not line or line == "" then
-          return nil
-      else
-          table.insert(header, line)
+      if not line then
+        return nil
       end
+      table.insert(header, line)
+      while true do
+        local line, err = self.client:receive("*l")
+        if not line or line == "" then
+            break  -- End of header
+        else
+            table.insert(header, line)
+        end
+    end
+
 
       -- Decode the Content-Length from the header
       local content_length = 0
@@ -1002,7 +1005,6 @@ function LuadapClient:receivePackageNonBlocking()
           -- Receive the rest of the data based on Content-Length
           local total_received = 0
           local data = {}
-
           while total_received < content_length do
               local chunk, err, partial = self.client:receive(math.min(1024, content_length - total_received))
               if chunk then
@@ -1015,6 +1017,8 @@ function LuadapClient:receivePackageNonBlocking()
                   print("Error receiving data:", err)
                   break
               end
+
+
           end
 
           return {
@@ -1022,8 +1026,11 @@ function LuadapClient:receivePackageNonBlocking()
               body = json.decode(table.concat(data))
           }
       else
-          print("Content-Length not found in header")
+          return nil
       end
+  else
+    print("no client")
+    return nil
   end
 end
 
@@ -1078,24 +1085,6 @@ function LuadapClient:handleInitRequest(request)
       supportsConfigurationDoneRequest = true,
     }
     return InitializeResponse:new(request.body.seq, request.body.seq, true, "", capabilities)
-  -- ATTACH ==================================================================
-  elseif request.body.command == "attach" then
-    local attachResult = self:handleAttach(request.body)
-    if attachResult == true then
-      return AttachResponse:new(request.body.seq, request.body.seq, true)
-    else
-      attachResult.seq = request.body.seq
-      attachResult.request_seq = request.body.seq
-      return
-    end
-  -- SetExceptionBreakpoints =================================================
-  elseif request.body.command == "setExceptionBreakpoints" then
-    return SetExceptionBreakpointsResponse:new(request.body.seq, request.body.seq, true)
-  -- Threading ===============================================================
-  elseif request.body.command == "threads" then
-    -- lua is not multithreaded, so return 1 thread
-    local mainRoutine = Thread:new(1, "Main Routine")
-    return ThreadsResponse:new(request.body.seq, request.body.seq, true, { mainRoutine })
   end
 end
 
@@ -1129,10 +1118,11 @@ function LuadapClient:handleAttach(requestBody)
   return true
 end
 function LuadapClient:debugLoop(event, line) 
-  local request = self:receivePackage()
-  if request then
-    print("request: ")
+  local request = self:receivePackageNonBlocking()
+  if request ~= nil then
     print_nicely(request.body)
+    local response = self:handleRequest(request)
+    self:sendPackage(response)
   end
 end
 function Luadap.start(host, port)
@@ -1413,6 +1403,27 @@ function ThreadsResponse:display()
   end
 end
 
+function LuadapClient:handleRequest(request)
+  -- ATTACH ==================================================================
+  if request.body.command == "attach" then
+    local attachResult = self:handleAttach(request.body)
+    if attachResult == true then
+      return AttachResponse:new(request.body.seq, request.body.seq, true)
+    else
+      attachResult.seq = request.body.seq
+      attachResult.request_seq = request.body.seq
+      return
+    end
+  -- SetExceptionBreakpoints =================================================
+  elseif request.body.command == "setExceptionBreakpoints" then
+    return SetExceptionBreakpointsResponse:new(request.body.seq, request.body.seq, true)
+  -- Threading ===============================================================
+  elseif request.body.command == "threads" then
+    -- lua is not multithreaded, so return 1 thread
+    local mainRoutine = Thread:new(1, "Main Routine")
+    return ThreadsResponse:new(request.body.seq, request.body.seq, true, { mainRoutine })
+  end
+end
 
 function Luadap.debughook(event, line)
   while dap_client.hitBreakpoint do
