@@ -893,6 +893,8 @@ function LuadapClient:fromClientSocket(client)
     self.client = client
     self.initialized = false;
     self.hitBreakpoint = false
+    self.sendEntryEvent = false;
+    self.hasStartReturned = false;
     return self
 end
 function LuadapClient:connect(host, port)
@@ -1142,7 +1144,7 @@ function Luadap.start(host, port)
     dap_client:sendPackage(response)
   end
   print("debugger initialized")
-  debug.sethook(Luadap.debughook, "crl")
+  debug.sethook(Luadap.debughook, "crl",100)
 end
 
 -- PROTOCOL TYPES --
@@ -1424,12 +1426,45 @@ function LuadapClient:handleRequest(request)
     return ThreadsResponse:new(request.body.seq, request.body.seq, true, { mainRoutine })
   end
 end
+function LuadapClient:getFile()
+  return debug.getinfo(2, "S").source:sub(2)
+end
+function LuadapClient:getModule()
+  return debug.getinfo(2, "S").source:sub(2):match("([^/\\]+)%.lua$")
+end
+function LuadapClient:traceback()
+  local level = 1
+  while true do
+    local info = debug.getinfo(level, "Sl")
+    if not info then break end
+    if info.what == "C" then   -- is a C function?
+      print(level, "C function")
+    elseif info.short_src:match("([^/\\]+)%.lua$") ~= "luadap" then
+      return info.short_src:match("([^/\\]+)%.lua$"), info.linedefined
+    end
+    level = level + 1
+  end
+end
 
 function Luadap.debughook(event, line)
-  while dap_client.hitBreakpoint do
-    -- remain in the debugloop until we receive a continue request
-    dap_client:debugLoop(event,line)
-  end
+  -- debuging ourselves is not allowed here!
+
+    local file, line = dap_client:traceback()
+    print("file:" .. file .. " line: " .. line)
+    if not dap_client.hasStartReturned then
+      
+      dap_client.hasStartReturned = true;
+      return
+    end
+    if dap_client.hasStartReturned then
+      print(line)
+
+
+      while dap_client.hitBreakpoint do
+        -- remain in the debugloop until we receive a continue request
+        dap_client:debugLoop(event,line)
+      end
+    end
 end
 
 
