@@ -892,6 +892,7 @@ function LuadapClient:fromClientSocket(client)
     local self = setmetatable({}, LuadapClient)
     self.client = client
     self.initialized = false;
+    self.hitBreakpoint = false
     return self
 end
 function LuadapClient:connect(host, port)
@@ -915,6 +916,12 @@ function LuadapClient:receive(pattern)
         print("Received data:", data)
     end
     return data
+end
+
+function LuadapClient:hasData()
+  local readable, _, _ = socket.select({self.client}, nil, 0)
+  print(#readable)
+  return #readable > 0
 end
 function LuadapClient:receivePackage()
     if self.client then
@@ -965,7 +972,59 @@ function LuadapClient:receivePackage()
         else
             print("Content-Length not found in header")
         end
+    else
+      print("no client")
     end
+end
+
+function LuadapClient:receivePackageNonBlocking()
+  if self.client then
+      -- Receive the header
+      local header = {}
+      local line, err = self.client:receive("*l")
+      if not line or line == "" then
+          return nil
+      else
+          table.insert(header, line)
+      end
+
+      -- Decode the Content-Length from the header
+      local content_length = 0
+      for _, line in ipairs(header) do
+          local key, value = line:match("^(.-):%s*(.*)$")
+          if key and key:lower() == "content-length" then
+              content_length = tonumber(value)
+              break
+          end
+      end
+
+      if content_length > 0 then
+          -- Receive the rest of the data based on Content-Length
+          local total_received = 0
+          local data = {}
+
+          while total_received < content_length do
+              local chunk, err, partial = self.client:receive(math.min(1024, content_length - total_received))
+              if chunk then
+                  table.insert(data, chunk)
+                  total_received = total_received + #chunk
+              elseif partial then
+                  table.insert(data, partial)
+                  total_received = total_received + #partial
+              else
+                  print("Error receiving data:", err)
+                  break
+              end
+          end
+
+          return {
+              headers = header,
+              body = json.decode(table.concat(data))
+          }
+      else
+          print("Content-Length not found in header")
+      end
+  end
 end
 
 function LuadapClient:sendPackage(package)
@@ -1002,7 +1061,7 @@ function LuadapClient:settimeout(timeout)
     self.client:settimeout(timeout)
 end
 
-function LuadapClient:handleRequest(request)
+function LuadapClient:handleInitRequest(request)
   if request.body.command == "initialize" then
 
     if request.body.arguments.adapterID ~= "luadap" then
@@ -1042,9 +1101,10 @@ end
 
 function LuadapClient:send_event(command,seq)
   if command == "initialize" then
-    self:sendPackage(Event:new(seq, "initialized"))
+    self:sendPackage(Event:new(seq,"initialized"))
+    dap_client.hitBreakpoint = true;
+    dap_client.initialized = true;
   end
-  
 end
 
 function LuadapClient:handleAttach(requestBody)
@@ -1068,23 +1128,31 @@ function LuadapClient:handleAttach(requestBody)
   end
   return true
 end
-
+function LuadapClient:debugLoop(event, line) 
+  local request = self:receivePackage()
+  if request then
+    print("request: ")
+    print_nicely(request.body)
+  end
+end
 function Luadap.start(host, port)
   dap_server = LuadapServer:new(host, port)
   print("lua Debug Adapter Server waiting for client to connect!")
   dap_client = dap_server:accept()
   print("client connected, waiting for initialize request")
 
-
+  local last_seq = 0
   while not dap_client.initialized do
     local request = dap_client:receivePackage()
     print_nicely(request.body)
-    local response = dap_client:handleRequest(request)
+    local response = dap_client:handleInitRequest(request)
     print_nicely(response)
-    dap_client:sendPackage(response)
+    last_seq = request.body.seq
     dap_client:send_event(request.body.command,request.body.seq)
+    dap_client:sendPackage(response)
   end
-  debug.sethook(Luadap.debughook, "l")
+  print("debugger initialized")
+  debug.sethook(Luadap.debughook, "crl")
 end
 
 -- PROTOCOL TYPES --
@@ -1182,6 +1250,20 @@ end
 Response = setmetatable({}, {__index = ProtocolMessage})
 Response.__index = Response
 
+-- StoppedEvent class inheriting from Event
+StoppedEvent = setmetatable({}, {__index = Event})
+StoppedEvent.__index = StoppedEvent
+
+function StoppedEvent:new(seq, reason, threadId, allThreadsStopped, hitBreakpointIds)
+    local instance = Event.new(self, seq, 'stopped', {
+        reason = reason,
+        threadId = threadId,
+        allThreadsStopped = allThreadsStopped,
+        hitBreakpointIds = hitBreakpointIds
+    })
+    return instance
+end
+
 function Response:new(seq, request_seq, success, command, message, body)
     local instance = ProtocolMessage.new(self, seq, 'response')
     instance.request_seq = request_seq or 1
@@ -1213,7 +1295,7 @@ function InitializeResponse:new(seq, request_seq, success, message, capabilities
   message = message
   capabilities = capabilities or {}
 
-  local instance = Response.new(self, seq, request_seq, success, "initialize", message, { Capabilities = capabilities })
+  local instance = Response.new(self, seq, request_seq, success, "initialize", message, { capabilities = capabilities })
   return instance
 end
 
@@ -1331,8 +1413,12 @@ function ThreadsResponse:display()
   end
 end
 
-function Luadap.debughook(event, line)
 
+function Luadap.debughook(event, line)
+  while dap_client.hitBreakpoint do
+    -- remain in the debugloop until we receive a continue request
+    dap_client:debugLoop(event,line)
+  end
 end
 
 

@@ -20,6 +20,9 @@ project "luasocket"
         "luasocket/src/timeout.c", "luasocket/src/timeout.h",
         "luasocket/src/udp.c", "luasocket/src/udp.h",
     }
+    postbuildcommands {
+        "{COPY} %{cfg.buildtarget.relpath} %{wks.location}/projects/bin/%{cfg.buildcfg}"
+    }
 
     includedirs { "lua/src", "luasocket/src" }  -- Adjust include paths to be relative
 
@@ -47,3 +50,4 @@ project "luasocket"
     filter "configurations:Release"
         defines { "NDEBUG" }
         optimize "On"
+    
