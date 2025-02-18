@@ -1287,7 +1287,7 @@ function InitializeResponse:new(seq, request_seq, success, message, capabilities
   message = message
   capabilities = capabilities or {}
 
-  local instance = Response.new(self, seq, request_seq, success, "initialize", message, { capabilities = capabilities })
+  local instance = Response.new(self, seq, request_seq, success, "initialize", message, capabilities)
   return instance
 end
 
@@ -1367,6 +1367,7 @@ function Message:display()
   print("URL: " .. self.url)
   print("URL Label: " .. self.urlLabel)
 end
+
 -- Extend Response to create AttachResponse
 AttachResponse = setmetatable({}, { __index = Response })
 AttachResponse.__index = AttachResponse
@@ -1376,6 +1377,14 @@ function AttachResponse:new(seq, request_seq, success, message)
   return instance
 end
 
+-- Extend Response to create AttachResponse
+ConfigurationDoneResponse = setmetatable({}, { __index = Response })
+ConfigurationDoneResponse.__index = AttachResponse
+
+function ConfigurationDoneResponse:new(seq, request_seq, success, message)
+  local instance = Response.new(self, seq, request_seq, success, "configurationDone", message)
+  return instance
+end
 
 SetExceptionBreakpointsResponse = setmetatable({}, { __index = Response })
 SetExceptionBreakpointsResponse.__index = SetExceptionBreakpointsResponse
@@ -1424,6 +1433,10 @@ function LuadapClient:handleRequest(request)
     -- lua is not multithreaded, so return 1 thread
     local mainRoutine = Thread:new(1, "Main Routine")
     return ThreadsResponse:new(request.body.seq, request.body.seq, true, { mainRoutine })
+  elseif request.body.command == "configurationDone" then
+    -- TODO add implementation
+    return ConfigurationDoneResponse:new(request.body.seq, request.body.seq, true)
+
   end
 end
 function LuadapClient:getFile()
