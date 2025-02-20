@@ -984,7 +984,7 @@ function LuadapClient:receivePackageNonBlocking()
       end
       table.insert(header, line)
       while true do
-        local line, err = self.client:receive("*l")
+        line, err = self.client:receive("*l")
         if not line or line == "" then
             break  -- End of header
         else
@@ -1009,6 +1009,7 @@ function LuadapClient:receivePackageNonBlocking()
           local data = {}
           while total_received < content_length do
               local chunk, err, partial = self.client:receive(math.min(1024, content_length - total_received))
+              print("receiving")
               if chunk then
                   table.insert(data, chunk)
                   total_received = total_received + #chunk
@@ -1435,6 +1436,7 @@ function LuadapClient:handleRequest(request)
     return ThreadsResponse:new(request.body.seq, request.body.seq, true, { mainRoutine })
   elseif request.body.command == "configurationDone" then
     -- TODO add implementation
+    dap_client:settimeout(0)
     return ConfigurationDoneResponse:new(request.body.seq, request.body.seq, true)
 
   end
@@ -1464,20 +1466,9 @@ function Luadap.debughook(event, line)
 
     local file, line = dap_client:traceback()
     print("file:" .. file .. " line: " .. line)
-    if not dap_client.hasStartReturned then
-      
-      dap_client.hasStartReturned = true;
-      return
-    end
-    if dap_client.hasStartReturned then
-      print(line)
+    dap_client:debugLoop(event, line)
 
-
-      while dap_client.hitBreakpoint do
-        -- remain in the debugloop until we receive a continue request
-        dap_client:debugLoop(event,line)
-      end
-    end
+  
 end
 
 

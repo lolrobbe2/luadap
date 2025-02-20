@@ -7,4 +7,13 @@ local luadap = require("luadap")
 
 luadap.start()
 
-print("hello world")
+function fibonacci()
+    local a, b = 0, 1
+    while true do
+        print(a)
+        a, b = b, a + b
+    end
+end
+
+-- Start the endless Fibonacci sequence
+fibonacci()
