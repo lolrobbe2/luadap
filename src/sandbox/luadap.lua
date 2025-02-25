@@ -895,6 +895,7 @@ function LuadapClient:fromClientSocket(client)
     self.hitBreakpoint = false
     self.sendEntryEvent = false;
     self.hasStartReturned = false;
+    self.stackLevel = 0;
     return self
 end
 function LuadapClient:connect(host, port)
@@ -1463,9 +1464,12 @@ end
 
 function Luadap.debughook(event, line)
   -- debuging ourselves is not allowed here!
-
-    local file, line = dap_client:traceback()
-    print("file:" .. file .. " line: " .. line)
+    if event == "call" then
+      dap_client.stackLevel = dap_client.stackLevel + 1
+    elseif event == "return" then
+    dap_client.stackLevel = dap_client.stackLevel - 1
+    end
+  
     dap_client:debugLoop(event, line)
 
   
