@@ -1475,7 +1475,10 @@ function Luadap.debughook(event, line)
   if dap_client.stackLevel >= 0 and info.currentline ~= -1 then
     print("File: " .. (info.source or "N/A") .. ", Line: " .. (info.currentline or "N/A"))
   end
-
+  
+  if event == "line" then
+    print("lin:" .. line)
+  end
   dap_client:debugLoop(event, line)
 end
 
