@@ -1440,7 +1440,8 @@ function LuadapClient:handleRequest(request)
     -- TODO add implementation
     dap_client:settimeout(0)
     return ConfigurationDoneResponse:new(request.body.seq, request.body.seq, true)
-
+  elseif request.body.command == "stackTrace" then
+    -- TODO return stack trace
   end
 end
 function LuadapClient:getFile()
@@ -1481,9 +1482,10 @@ function Luadap.debughook(event, line)
     if event == "line" and not dap_client.first_line_event and not info.short_src:match("luadap.lua$") then 
       -- we need to send a breakpoint event here.
       --send the stopped event
-      print(" first line File: " .. (info.short_src or "N/A") .. ", Line: " .. (info.currentline or "N/A"))
       dap_client.first_line_event = true;
       dap_client.hitBreakpoint = true;
+
+      dap_client:sendPackage(StoppedEvent:new(0,"entry",1,true))
     end
   elseif event == "line" and dap_client.stackLevel >= -1 then
     print("executing line:" .. line .. " level:" .. dap_client.stackLevel)
