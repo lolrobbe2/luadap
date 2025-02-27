@@ -1463,16 +1463,14 @@ function LuadapClient:traceback()
 end
 
 function Luadap.debughook(event, line)
-  -- debuging ourselves is not allowed here!
-    if event == "call" then
-      dap_client.stackLevel = dap_client.stackLevel + 1
-    elseif event == "return" then
+-- debuging ourselves is not allowed here!
+  if event == "call" then
+    dap_client.stackLevel = dap_client.stackLevel + 1
+  elseif event == "return" then
     dap_client.stackLevel = dap_client.stackLevel - 1
-    end
-  
-    dap_client:debugLoop(event, line)
-
-  
+  end
+  local info = debug.getinfo(dap_client.stackLevel)
+  dap_client:debugLoop(event, line)
 end
 
 
