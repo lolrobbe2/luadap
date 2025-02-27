@@ -1129,6 +1129,7 @@ function LuadapClient:debugLoop(event, line)
     self:sendPackage(response)
   end
 end
+
 function Luadap.start(host, port)
   dap_server = LuadapServer:new(host, port)
   print("lua Debug Adapter Server waiting for client to connect!")
@@ -1146,7 +1147,7 @@ function Luadap.start(host, port)
     dap_client:sendPackage(response)
   end
   print("debugger initialized")
-  debug.sethook(Luadap.debughook, "crl",100)
+  debug.sethook(Luadap.debughook, "lcr")
 end
 
 -- PROTOCOL TYPES --
@@ -1466,10 +1467,15 @@ function Luadap.debughook(event, line)
 -- debuging ourselves is not allowed here!
   if event == "call" then
     dap_client.stackLevel = dap_client.stackLevel + 1
-  elseif event == "return" then
+  elseif event == "return" or event == "tail return" then
     dap_client.stackLevel = dap_client.stackLevel - 1
   end
-  local info = debug.getinfo(dap_client.stackLevel)
+
+  local info = debug.getinfo(dap_client.stackLevel + 4, "Snl")
+  if dap_client.stackLevel >= 0 and info.currentline ~= -1 then
+    print("File: " .. (info.source or "N/A") .. ", Line: " .. (info.currentline or "N/A"))
+  end
+
   dap_client:debugLoop(event, line)
 end
 
