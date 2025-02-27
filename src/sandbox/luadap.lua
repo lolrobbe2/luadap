@@ -1095,7 +1095,6 @@ end
 function LuadapClient:send_event(command,seq)
   if command == "initialize" then
     self:sendPackage(Event:new(seq,"initialized"))
-    dap_client.hitBreakpoint = true;
     dap_client.initialized = true;
   end
 end
@@ -1435,6 +1434,7 @@ function LuadapClient:handleRequest(request)
   elseif request.body.command == "threads" then
     -- lua is not multithreaded, so return 1 thread
     local mainRoutine = Thread:new(1, "Main Routine")
+    dap_client.configurationDone = true
     return ThreadsResponse:new(request.body.seq, request.body.seq, true, { mainRoutine })
   elseif request.body.command == "configurationDone" then
     -- TODO add implementation
@@ -1465,6 +1465,11 @@ end
 
 function Luadap.debughook(event, line)
 -- debuging ourselves is not allowed here!
+
+  while not dap_client.configurationDone do
+    dap_client:debugLoop(event, line)
+  end
+  
   if event == "call" then
     dap_client.stackLevel = dap_client.stackLevel + 1
   elseif event == "return" or event == "tail return" then
@@ -1472,13 +1477,22 @@ function Luadap.debughook(event, line)
   end
 
   local info = debug.getinfo(dap_client.stackLevel + 4, "Snl")
-  if dap_client.stackLevel >= 0 and info.currentline ~= -1 then
-    print("File: " .. (info.source or "N/A") .. ", Line: " .. (info.currentline or "N/A"))
+  if dap_client.stackLevel >= -1 and info ~= nil and info.currentline ~= -1 then
+    if event == "line" and not dap_client.first_line_event and not info.short_src:match("luadap.lua$") then 
+      -- we need to send a breakpoint event here.
+      --send the stopped event
+      print(" first line File: " .. (info.short_src or "N/A") .. ", Line: " .. (info.currentline or "N/A"))
+      dap_client.first_line_event = true;
+      dap_client.hitBreakpoint = true;
+    end
+  elseif event == "line" and dap_client.stackLevel >= -1 then
+    print("executing line:" .. line .. " level:" .. dap_client.stackLevel)
   end
-  
-  if event == "line" then
-    print("lin:" .. line)
+
+  while dap_client.hitBreakpoint do
+    dap_client:debugLoop(event, line)
   end
+
   dap_client:debugLoop(event, line)
 end
 
