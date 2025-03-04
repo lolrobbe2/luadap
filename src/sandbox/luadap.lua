@@ -1416,6 +1416,136 @@ function ThreadsResponse:display()
   end
 end
 
+Source = {}
+Source.__index = Source
+
+function Source:new(name, path)
+  local instance = setmetatable({}, Source)
+  instance.name = name or nil -- Optional name
+  instance.path = path or nil -- Optional path
+  return instance
+end
+
+function Source:display()
+  print(string.format("Source Name: %s | Path: %s",
+    self.name or "[none]",
+    self.path or "[unknown]"
+  ))
+end
+
+StackTraceResponse = setmetatable({}, { __index = Response })
+StackTraceResponse.__index = StackTraceResponse
+
+function StackTraceResponse:new(seq, request_seq, success, stackFrames, message)
+  local body = { stackFrames = stackFrames or {} }
+  local instance = Response.new(self, seq, request_seq, success, "stackTrace", message, body)
+  return instance
+end
+
+function StackTraceResponse:display()
+  Response.display(self)
+  if self.body.stackFrames then
+    for _, frame in ipairs(self.body.stackFrames) do
+      frame:display()
+    end
+  end
+end
+
+-- Example StackFrame Object
+StackFrame = {}
+StackFrame.__index = StackFrame
+
+function StackFrame:new(id, name, source, line)
+  local instance = setmetatable({}, StackFrame)
+  instance.id = id
+  instance.name = name or "[anonymous]"
+  instance.source = source or Source:new()
+  instance.line = line or 0
+  return instance
+end
+
+function StackFrame:display()
+  print(string.format("Frame ID: %d | Name: %s | Source: %s | Line: %d",
+    self.id,
+    self.name,
+    self.source.path,
+    self.line
+  ))
+end
+
+local function makeAbsolutePath(path)
+  -- If the path is already absolute, return it
+  if path:match("^/") or path:match("^[a-zA-Z]:") then
+    return path:gsub("\\", "/") -- Normalize slashes
+  end
+
+  -- Get the current working directory
+  local handle = io.popen("cd")                                -- Works on both Windows & Linux
+  local cwd = handle:read("*a"):gsub("\n", ""):gsub("\\", "/") -- Normalize slashes
+  handle:close()
+
+  return cwd .. "/" .. path:gsub("\\", "/") -- Ensure slashes are forward
+end
+
+function LuadapClient:getStackFrames(maxLevels)
+  local stackFrames = {}
+  local level = self.stackLevel + 1
+  local collected = 0
+
+  while level >= -1 and collected < maxLevels do
+    local info = debug.getinfo(level + 6, "nSl")
+    if not info then break end
+    -- Correct the path
+    local correctedPath = info.short_src and info.short_src:gsub("\\", "/") or "[unknown]"
+    correctedPath = makeAbsolutePath(correctedPath)
+
+    -- Create a Source object with the corrected path and name
+    local source = Source:new(
+      correctedPath:match("[^/\\]+$") or "[unknown]", -- Extract name from path
+      correctedPath -- Corrected path
+    )
+    -- Create a StackFrame object for each level
+    local stackFrame = StackFrame:new(
+      level,                                    -- id
+      info.name or "[anonymous]",               -- name
+      source, -- source
+      info.currentline or 0                     -- line
+    )
+
+    table.insert(stackFrames, stackFrame)
+    level = level - 1
+    collected = collected + 1
+  end
+
+  return stackFrames
+end
+
+StackTraceResponse = setmetatable({}, { __index = Response })
+StackTraceResponse.__index = StackTraceResponse
+
+function StackTraceResponse:new(seq, request_seq, success, stackFrames, totalFrames, message)
+  local body = {
+    stackFrames = stackFrames or {}, -- Array of StackFrame objects
+    totalFrames = totalFrames -- Optional totalFrames field
+  }
+  local instance = Response.new(self, seq, request_seq, success, "stackTrace", message, body)
+  return instance
+end
+
+function StackTraceResponse:display()
+  Response.display(self)
+  if self.body.stackFrames then
+    print("Stack Frames:")
+    for _, frame in ipairs(self.body.stackFrames) do
+      frame:display()
+    end
+  end
+  if self.body.totalFrames then
+    print("Total Frames: " .. self.body.totalFrames)
+  end
+end
+
+-- Display all stack frames
 function LuadapClient:handleRequest(request)
   -- ATTACH ==================================================================
   if request.body.command == "attach" then
@@ -1442,6 +1572,10 @@ function LuadapClient:handleRequest(request)
     return ConfigurationDoneResponse:new(request.body.seq, request.body.seq, true)
   elseif request.body.command == "stackTrace" then
     -- TODO return stack trace
+    local stackFrames = dap_client:getStackFrames(10);
+    return StackTraceResponse:new(request.body.seq, request.body.seq, true,stackFrames)
+  elseif request.body.command == "source" then
+    print_nicely(request.body.arguments.source)
   end
 end
 function LuadapClient:getFile()
