@@ -896,6 +896,8 @@ function LuadapClient:fromClientSocket(client)
     self.sendEntryEvent = false;
     self.hasStartReturned = false;
     self.stackLevel = 0;
+    self.variables = {}
+    self.children = {}
     return self
 end
 function LuadapClient:connect(host, port)
@@ -1473,6 +1475,167 @@ function StackFrame:display()
   ))
 end
 
+VariablePresentationHint = {}
+VariablePresentationHint.__index = VariablePresentationHint
+
+-- Constructor for VariablePresentationHint
+function VariablePresentationHint:new(kind, attributes, visibility, lazy)
+  local instance = setmetatable({}, self)
+  instance.kind = kind                     -- The kind of variable (e.g., 'property', 'method', etc.)
+  instance.attributes = attributes or {}   -- An array of attributes (e.g., 'static', 'constant', etc.)
+  instance.visibility = visibility         -- The visibility of the variable (e.g., 'public', 'private', etc.)
+  instance.lazy = lazy or false            -- Indicates if the variable should be lazily evaluated
+  return instance
+end
+
+-- Method to display the hint's details
+function VariablePresentationHint:display()
+  print("Kind: " .. (self.kind or "nil"))
+  print("Attributes: " .. table.concat(self.attributes, ", "))
+  print("Visibility: " .. (self.visibility or "nil"))
+  print("Lazy: " .. tostring(self.lazy))
+end
+
+Variable = {}
+Variable.__index = Variable
+
+-- Constructor for Variable
+function Variable:new(name, value, variablesReference, presentationHint, evaluateName, namedVariables,
+                      indexedVariables)
+  local instance = setmetatable({}, self)
+  instance.name = name or ""
+  instance.value = value or ""
+  instance.variablesReference = variablesReference or 0
+  --[[
+    The kind of variable. Before introducing additional values, try to use the
+    listed values.
+    Values:
+    'property': Indicates that the object is a property.
+    'method': Indicates that the object is a method.
+    'class': Indicates that the object is a class.
+    'data': Indicates that the object is data.
+    'event': Indicates that the object is an event.
+    'baseClass': Indicates that the object is a base class.
+    'innerClass': Indicates that the object is an inner class.
+    'interface': Indicates that the object is an interface.
+    'mostDerivedClass': Indicates that the object is the most derived class.
+    'virtual': Indicates that the object is virtual, meaning it is a
+    synthetic object introduced by the adapter for rendering purposes, e.g., an
+    index range for large arrays.
+    'dataBreakpoint': Deprecated: Indicates that a data breakpoint is
+    registered for the object. The `hasDataBreakpoint` attribute should
+    generally be used instead.
+    etc.
+  ]]
+  instance.presentationHint = presentationHint
+  instance.evaluateName = evaluateName
+  instance.namedVariables = namedVariables
+  instance.indexedVariables = indexedVariables
+  return instance
+end
+
+function LuadapClient:getPresentationHint(value)
+  local typeOfValue = type(value)
+  local kind = nil
+
+  -- Map Lua types to supported 'kind' values directly
+  if typeOfValue == "function" then
+    kind = "method"
+  elseif typeOfValue == "userdata" then
+    kind = "class"
+  elseif typeOfValue == "table" then
+    if getmetatable(value) then
+      kind = "class"       -- Tables with metatables likely represent objects or classes
+    else
+      kind = "data"        -- General data tables
+    end
+  elseif typeOfValue == "thread" then
+    kind = "event"
+  elseif typeOfValue == "boolean" or typeOfValue == "number" or typeOfValue == "string" then
+    kind = "property"     -- Simplify basic types as 'property'
+  end
+
+  -- Create and return a VariablePresentationHint instance
+  return VariablePresentationHint:new(kind, {}, nil, false)
+end
+
+-- Method to display the variable's details
+function Variable:display()
+  print("Name: " .. self.name)
+  print("Value: " .. self.value)
+  print("Variables Reference: " .. self.variablesReference)
+  if self.presentationHint then print("Presentation Hint: " .. tostring(self.presentationHint)) end
+  if self.evaluateName then print("Evaluate Name: " .. self.evaluateName) end
+  if self.namedVariables then print("Named Variables: " .. self.namedVariables) end
+  if self.indexedVariables then print("Indexed Variables: " .. self.indexedVariables) end
+end
+
+Scope = {}
+Scope.__index = Scope
+
+-- Constructor for Scope
+function Scope:new(name, variablesReference, expensive, presentationHint, namedVariables, indexedVariables)
+  local instance = setmetatable({}, self)
+  instance.name = name or ""                              -- Name of the scope (e.g., 'Arguments', 'Locals', etc.)
+
+  --[[
+    A hint for how to present this scope in the UI. If this attribute is
+    missing, the scope is shown with a generic UI.
+    Values:
+    'arguments': Scope contains method arguments.
+    'locals': Scope contains local variables.
+    'registers': Scope contains registers. Only a single `registers` scope
+    should be returned from a `scopes` request.
+    'returnValue': Scope contains one or more return values.
+    etc.
+  ]]
+  instance.presentationHint = presentationHint
+  instance.variablesReference = variablesReference or 0   -- Reference to retrieve the scope's variables
+  instance.namedVariables = namedVariables                -- Number of named variables in this scope
+  instance.indexedVariables = indexedVariables            -- Number of indexed variables in this scope
+  instance.expensive = expensive or false                 -- Indicates if variables are expensive to retrieve
+  return instance
+end
+
+-- Method to display the scope's details
+function Scope:display()
+  print("Name: " .. self.name)
+  print("Presentation Hint: " .. (self.presentationHint or "nil"))
+  print("Variables Reference: " .. self.variablesReference)
+  if self.namedVariables then print("Named Variables: " .. self.namedVariables) end
+  if self.indexedVariables then print("Indexed Variables: " .. self.indexedVariables) end
+  print("Expensive: " .. tostring(self.expensive))
+end
+
+
+ScopesResponse = setmetatable({}, { __index = Response })
+ScopesResponse.__index = ScopesResponse
+
+-- Constructor for ScopesResponse
+function ScopesResponse:new(seq, request_seq, success, command, message, scopes)
+  -- Call the parent Response constructor
+  local instance = Response.new(self, seq, request_seq, success, command, message, { scopes = scopes or {} })
+  setmetatable(instance, self)
+  return instance
+end
+
+-- Method to display the ScopesResponse details
+function ScopesResponse:display()
+  -- Call the parent Response's display method
+  Response.display(self)
+
+  -- Display ScopesResponse-specific details
+  print("Scopes:")
+  if #self.body.scopes == 0 then
+    print("No scopes available.")
+  else
+    for index, scope in ipairs(self.body.scopes) do
+      print("Scope " .. index .. ":")
+      scope:display()       -- Assumes Scope objects have a `display` method
+    end
+  end
+end
+
 local function makeAbsolutePath(path)
   -- If the path is already absolute, return it
   if path:match("^/") or path:match("^[a-zA-Z]:") then
@@ -1576,6 +1739,10 @@ function LuadapClient:handleRequest(request)
     return StackTraceResponse:new(request.body.seq, request.body.seq, true,stackFrames)
   elseif request.body.command == "source" then
     print_nicely(request.body.arguments.source)
+  elseif request.body.command == "scopes" then
+    local localScope = Scope:new("Locals", 1, false, "locals")
+  -- Create a ScopesResponse containing the local scope
+    return ScopesResponse:new(request.body.seq, request.body.seq, true, "scopes", true, { localScope 
   end
 end
 function LuadapClient:getFile()
