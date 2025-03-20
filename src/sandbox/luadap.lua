@@ -1765,6 +1765,8 @@ function LuadapClient:handleRequest(request)
     local localScope = Scope:new("Locals", 1, false, "locals")
   -- Create a ScopesResponse containing the local scope
     return ScopesResponse:new(request.body.seq, request.body.seq, true, "scopes", true, { localScope })
+  elseif request.body.command == "variables" then
+    --TODO
   end
 end
 function LuadapClient:getFile()
