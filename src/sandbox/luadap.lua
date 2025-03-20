@@ -891,11 +891,12 @@ end
 function LuadapClient:fromClientSocket(client)
     local self = setmetatable({}, LuadapClient)
     self.client = client
-    self.initialized = false;
+    self.initialized = false
     self.hitBreakpoint = false
-    self.sendEntryEvent = false;
-    self.hasStartReturned = false;
-    self.stackLevel = 0;
+    self.sendEntryEvent = false
+    self.hasStartReturned = false
+    self.stackLevel = 0
+    self.variablesCount = 0
     self.variables = {}
     self.children = {}
     return self
@@ -1097,7 +1098,7 @@ end
 function LuadapClient:send_event(command,seq)
   if command == "initialize" then
     self:sendPackage(Event:new(seq,"initialized"))
-    dap_client.initialized = true;
+    dap_client.initialized = true
   end
 end
 
@@ -1529,8 +1530,28 @@ function Variable:new(name, value, variablesReference, presentationHint, evaluat
   ]]
   instance.presentationHint = presentationHint
   instance.evaluateName = evaluateName
-  instance.namedVariables = namedVariables
-  instance.indexedVariables = indexedVariables
+
+  if type(value) == "table" then
+    instance.indexedVariables = #value     -- Fast and efficient way to count array-like elements
+
+    -- Count named variables (keys that are not sequential integers)
+    local namedCount = 0
+    for k in pairs(value) do
+      if type(k) ~= "number" or k % 1 ~= 0 or k <= 0 or k > instance.indexedVariables then
+        namedCount = namedCount + 1
+      end
+    end
+    instance.namedVariables = namedCount > 0 and namedCount or nil
+  else
+    instance.namedVariables = nil
+    instance.indexedVariables = nil
+  end 
+
+  -- Store value in the metatable
+  local mt = getmetatable(instance) or {}
+  mt.value = value or ""
+  setmetatable(instance, mt)
+
   return instance
 end
 
@@ -1654,9 +1675,10 @@ function LuadapClient:getStackFrames(maxLevels)
   local stackFrames = {}
   local level = self.stackLevel + 1
   local collected = 0
-
+  print(level)
   while level >= -1 and collected < maxLevels do
     local info = debug.getinfo(level + 6, "nSl")
+    print(info)
     if not info then break end
     -- Correct the path
     local correctedPath = info.short_src and info.short_src:gsub("\\", "/") or "[unknown]"
@@ -1735,14 +1757,14 @@ function LuadapClient:handleRequest(request)
     return ConfigurationDoneResponse:new(request.body.seq, request.body.seq, true)
   elseif request.body.command == "stackTrace" then
     -- TODO return stack trace
-    local stackFrames = dap_client:getStackFrames(10);
+    local stackFrames = dap_client:getStackFrames(10)
     return StackTraceResponse:new(request.body.seq, request.body.seq, true,stackFrames)
   elseif request.body.command == "source" then
     print_nicely(request.body.arguments.source)
   elseif request.body.command == "scopes" then
     local localScope = Scope:new("Locals", 1, false, "locals")
   -- Create a ScopesResponse containing the local scope
-    return ScopesResponse:new(request.body.seq, request.body.seq, true, "scopes", true, { localScope 
+    return ScopesResponse:new(request.body.seq, request.body.seq, true, "scopes", true, { localScope })
   end
 end
 function LuadapClient:getFile()
@@ -1765,6 +1787,26 @@ function LuadapClient:traceback()
   end
 end
 
+--[[
+  This function indexes all the local variables when a breakpoint has been hit
+]]
+function LuadapClient:indexLocals()
+  local level = self.stackLevel
+  local index = 1
+  while true do
+    -- Retrieve the name and value of the local variable
+    local name, value = debug.getlocal(level + 5, index)
+    if not name then 
+      print(name)
+      break;
+    end                   -- Exit when there are no more locals
+    -- Store the local variable in a table
+    self.variables[index] = Variable:new(name,tostring(value),index,self:getPresentationHint(value),name,0,0)
+    index = index + 1
+    self.variablesCount  = self.variablesCount + 1
+  end
+  
+end
 function Luadap.debughook(event, line)
 -- debuging ourselves is not allowed here!
 
@@ -1783,8 +1825,8 @@ function Luadap.debughook(event, line)
     if event == "line" and not dap_client.first_line_event and not info.short_src:match("luadap.lua$") then 
       -- we need to send a breakpoint event here.
       --send the stopped event
-      dap_client.first_line_event = true;
-      dap_client.hitBreakpoint = true;
+      dap_client.first_line_event = true
+      dap_client.hitBreakpoint = true
 
       dap_client:sendPackage(StoppedEvent:new(0,"entry",1,true))
     end
