@@ -1673,6 +1673,7 @@ local function makeAbsolutePath(path)
     cwd = handle:read("*a"):gsub("\n", ""):gsub("\\", "/") -- Normalize slashes
     handle:close()
   else
+    print("used provided cwd")
     cwd = dap_client.sessionInfo.cwd
   end
  
