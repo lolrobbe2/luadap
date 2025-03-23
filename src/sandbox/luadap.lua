@@ -1109,7 +1109,10 @@ function LuadapClient:handleAttach(requestBody)
   self.sessionInfo.type = requestBody.arguments.type
   self.sessionInfo.host = requestBody.arguments.host
   self.sessionInfo.port = requestBody.arguments.port
+  self.sessionInfo.cwd = requestBody.arguments.cwd
 
+  print(self.sessionInfo.cwd)
+  
   if self.sessionInfo.type ~= "luadap" then
     local error_info = {
       id = 1,
@@ -1664,9 +1667,16 @@ local function makeAbsolutePath(path)
   end
 
   -- Get the current working directory
-  local handle = io.popen("cd")                                -- Works on both Windows & Linux
-  local cwd = handle:read("*a"):gsub("\n", ""):gsub("\\", "/") -- Normalize slashes
-  handle:close()
+  local cwd = nil
+  if not dap_client.sessionInfo.cwd then
+    local handle = io.popen("cd")                        -- Works on both Windows & Linux
+    cwd = handle:read("*a"):gsub("\n", ""):gsub("\\", "/") -- Normalize slashes
+    handle:close()
+  else
+    print("used provided cwd")
+    cwd = dap_client.sessionInfo.cwd
+  end
+ 
 
   return cwd .. "/" .. path:gsub("\\", "/") -- Ensure slashes are forward
 end
@@ -1767,6 +1777,7 @@ function LuadapClient:handleRequest(request)
     return ScopesResponse:new(request.body.seq, request.body.seq, true, "scopes", true, { localScope })
   elseif request.body.command == "variables" then
     --TODO
+    print_nicely(request.body.arguments)
   end
 end
 function LuadapClient:getFile()
@@ -1794,10 +1805,10 @@ end
 ]]
 function LuadapClient:indexLocals()
   local level = self.stackLevel
-  local index = 1
+  local index = 2 -- variablesReference: 1 is reserved as the root.
   while true do
     -- Retrieve the name and value of the local variable
-    local name, value = debug.getlocal(level + 5, index)
+    local name, value = debug.getlocal(level + 5, index - 1)
     if not name then 
       print(name)
       break;

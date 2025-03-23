@@ -7,6 +7,7 @@
             "request": "attach",
             "host": "localhost",
             "port": 3000,
+            "cwd": "${workspaceFolder}"
         }
     ]
 }
