@@ -1739,7 +1739,25 @@ function StackTraceResponse:display()
   end
 end
 
--- Display all stack frames
+-- Extend Response to create VariablesResponse
+VariablesResponse = setmetatable({}, { __index = Response })
+VariablesResponse.__index = VariablesResponse
+
+function VariablesResponse:new(seq, request_seq, success, message, variables)
+    -- Ensure variables is always an array table
+    local variablesArray = {}
+    if type(variables) == "table" then
+        for _, v in pairs(variables) do
+            table.insert(variablesArray, v) -- Insert preserving all indices
+        end
+    else
+        table.insert(variablesArray, variables) -- Wrap single variable in table
+    end
+    
+    local instance = Response.new(self, seq, request_seq, success, "variables", message, { variables = variablesArray })
+    return instance
+end
+
 function LuadapClient:handleRequest(request)
   -- ATTACH ==================================================================
   if request.body.command == "attach" then
@@ -1777,6 +1795,15 @@ function LuadapClient:handleRequest(request)
   elseif request.body.command == "variables" then
     --TODO
     print_nicely(request.body.arguments)
+    if not self.children[request.body.arguments.variablesReference] then
+      if request.body.arguments.variablesReference == 1 then
+        print("hello")
+        self:indexLocals()
+      else
+        -- get the children
+      end
+      return VariablesResponse:new(request.body.seq, request.body.seq, true, "Variables", self.children[request.body.arguments.variablesReference])
+    end
   end
 end
 function LuadapClient:getFile()
@@ -1805,15 +1832,18 @@ end
 function LuadapClient:indexLocals()
   local level = self.stackLevel
   local index = 2 -- variablesReference: 1 is reserved as the root.
+  local rootVariables = {}
   while true do
     -- Retrieve the name and value of the local variable
-    local name, value = debug.getlocal(level + 5, index - 1)
+    local name, value = debug.getlocal(level + 7, index - 1)
     if not name then 
       print(name)
-      break;
-    end                   -- Exit when there are no more locals
+      break; -- Exit when there are no more locals
+    end                   
     -- Store the local variable in a table
     self.variables[index] = Variable:new(name,tostring(value),index,self:getPresentationHint(value),name,0,0)
+    rootVariables[index] = self.variables[index]
+    self.children[1] = rootVariables
     index = index + 1
     self.variablesCount  = self.variablesCount + 1
   end
