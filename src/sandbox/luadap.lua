@@ -1468,6 +1468,7 @@ function StackFrame:new(id, name, source, line)
   instance.name = name or "[anonymous]"
   instance.source = source or Source:new()
   instance.line = line or 0
+  instance.column = 0
   return instance
 end
 
@@ -1705,10 +1706,7 @@ function LuadapClient:getStackFrames(maxLevels)
     -- Correct the path
     local correctedPath = info.short_src and info.short_src:gsub("\\", "/") or "[unknown]"
     correctedPath = makeAbsolutePath(correctedPath)
-    local osCorrectedPath = correctedPath:gsub("/C:","C:",1)
-    if osCorrectedPath:match("^C:") then
-      osCorrectedPath = osCorrectedPath:gsub("/", '\\')
-    end
+    local osCorrectedPath = correctedPath:gsub("/C:","C:",1):gsub("/", "\\")
     -- Create a Source object with the corrected path and name
     local source = Source:new(
       correctedPath:match("[^/\\]+$") or "[unknown]", -- Extract name from path
@@ -1716,8 +1714,8 @@ function LuadapClient:getStackFrames(maxLevels)
     )
     -- Create a StackFrame object for each level
     local stackFrame = StackFrame:new(
-      level,                                    -- id
-      info.name or correctedPath:match("[^/\\]+$") or "[unknown]",               -- name
+      level + 1,                                    -- id
+      info.name or "[unknown]",               -- name
       source, -- source
       info.currentline or 0                     -- line
     )
