@@ -1429,6 +1429,7 @@ function Source:new(name, path)
   local instance = setmetatable({}, Source)
   instance.name = name or nil -- Optional name
   instance.path = path or nil -- Optional path
+  instance.sourceReference = 0 -- specify 0 so the client reads the file.
   return instance
 end
 
@@ -1661,23 +1662,35 @@ function ScopesResponse:display()
 end
 
 local function makeAbsolutePath(path)
+  -- Normalize slashes
+  path = path:gsub("\\", "/")
+
   -- If the path is already absolute, return it
   if path:match("^/") or path:match("^[a-zA-Z]:") then
-    return path:gsub("\\", "/") -- Normalize slashes
+    return path
   end
 
   -- Get the current working directory
-  local cwd = nil
+  local cwd
   if not dap_client.sessionInfo.cwd then
-    local handle = io.popen("cd")                        -- Works on both Windows & Linux
+    local handle = io.popen("cd") -- Works on both Windows & Linux
     cwd = handle:read("*a"):gsub("\n", ""):gsub("\\", "/") -- Normalize slashes
     handle:close()
   else
     cwd = dap_client.sessionInfo.cwd
   end
- 
 
-  return cwd .. "/" .. path:gsub("\\", "/") -- Ensure slashes are forward
+  -- Resolve ./ and ../ in the path
+  local parts = {}
+  for part in (cwd .. "/" .. path):gmatch("[^/]+") do
+    if part == ".." then
+      table.remove(parts) -- Go up one directory
+    elseif part ~= "." then
+      table.insert(parts, part)
+    end
+  end
+
+  return "/" .. table.concat(parts, "/")
 end
 
 function LuadapClient:getStackFrames(maxLevels)
@@ -1692,16 +1705,19 @@ function LuadapClient:getStackFrames(maxLevels)
     -- Correct the path
     local correctedPath = info.short_src and info.short_src:gsub("\\", "/") or "[unknown]"
     correctedPath = makeAbsolutePath(correctedPath)
-
+    local osCorrectedPath = correctedPath:gsub("/C:","C:",1)
+    if osCorrectedPath:match("^C:") then
+      osCorrectedPath = osCorrectedPath:gsub("/", '\\')
+    end
     -- Create a Source object with the corrected path and name
     local source = Source:new(
       correctedPath:match("[^/\\]+$") or "[unknown]", -- Extract name from path
-      correctedPath -- Corrected path
+      osCorrectedPath -- Corrected path
     )
     -- Create a StackFrame object for each level
     local stackFrame = StackFrame:new(
       level,                                    -- id
-      info.name or "[anonymous]",               -- name
+      info.name or correctedPath:match("[^/\\]+$") or "[unknown]",               -- name
       source, -- source
       info.currentline or 0                     -- line
     )
