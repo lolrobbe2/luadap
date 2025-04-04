@@ -1776,6 +1776,9 @@ function LuadapClient:handleRequest(request)
     return ScopesResponse:new(request.body.seq, request.body.seq, true, "scopes", true, { localScope })
   elseif request.body.command == "variables" then
     --TODO
+    local reference = request.body.arguments.reference;
+    print("var ref:" .. reference)
+
     print_nicely(request.body.arguments)
   end
 end
