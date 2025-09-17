@@ -899,6 +899,7 @@ function LuadapClient:fromClientSocket(client)
     self.variablesCount = 0
     self.variables = {}
     self.children = {}
+    self.next = false;
     return self
 end
 function LuadapClient:connect(host, port)
@@ -1246,9 +1247,6 @@ function ThreadEvent:display()
   print("Reason: " .. self.body.reason)
   print("Thread ID: " .. self.body.threadId)
 end
--- Derived class Response inheriting from ProtocolMessage
-Response = setmetatable({}, {__index = ProtocolMessage})
-Response.__index = Response
 
 -- StoppedEvent class inheriting from Event
 StoppedEvent = setmetatable({}, {__index = Event})
@@ -1263,6 +1261,9 @@ function StoppedEvent:new(seq, reason, threadId, allThreadsStopped, hitBreakpoin
     })
     return instance
 end
+-- Derived class Response inheriting from ProtocolMessage
+Response = setmetatable({}, { __index = ProtocolMessage })
+Response.__index = Response
 
 function Response:new(seq, request_seq, success, command, message, body)
     local instance = ProtocolMessage.new(self, seq, 'response')
@@ -1681,14 +1682,13 @@ local function makeAbsolutePath(path)
   return cwd .. "/" .. path:gsub("\\", "/") -- Ensure slashes are forward
 end
 
-function LuadapClient:getStackFrames(maxLevels)
+function LuadapClient:getStackFrames(maxLevels, offset)
   local stackFrames = {}
   local level = self.stackLevel + 1
   local collected = 0
-  print(level)
+  local usedOffset = offset or 6
   while level >= -1 and collected < maxLevels do
-    local info = debug.getinfo(level + 6, "nSl")
-    print(info)
+    local info = debug.getinfo(level + usedOffset, "nSl")
     if not info then break end
     -- Correct the path
     local correctedPath = info.short_src and info.short_src:gsub("\\", "/") or "[unknown]"
@@ -1701,13 +1701,18 @@ function LuadapClient:getStackFrames(maxLevels)
     )
     -- Create a StackFrame object for each level
     local stackFrame = StackFrame:new(
-      level,                                    -- id
-      info.name or "[anonymous]",               -- name
-      source, -- source
-      info.currentline or 0                     -- line
+      level,                                     -- id
+      info.name or source.name or "[anonymous]", -- name
+      source,                                    -- source
+      info.currentline or 0                      -- line
     )
 
-    table.insert(stackFrames, stackFrame)
+    if stackFrame.source.name == "[C]" then
+      return nil
+    else if stackFrame.currentline ~= -1 and stackFrame.source.name ~= "luadap.lua" then
+      table.insert(stackFrames, 1, stackFrame)
+    end
+    end
     level = level - 1
     collected = collected + 1
   end
@@ -1740,6 +1745,19 @@ function StackTraceResponse:display()
   end
 end
 
+-- Derived class NextResponse inheriting from Response
+NextResponse = setmetatable({}, { __index = Response })
+NextResponse.__index = NextResponse
+
+function NextResponse:new(seq, request_seq, success, message, body)
+  return Response.new(self, seq, request_seq, success, "next", message, body)
+end
+
+function NextResponse:display()
+  Response.display(self)
+  -- Add any NextResponse-specific display logic here if needed
+end
+
 -- Display all stack frames
 function LuadapClient:handleRequest(request)
   -- ATTACH ==================================================================
@@ -1770,24 +1788,34 @@ function LuadapClient:handleRequest(request)
     local stackFrames = dap_client:getStackFrames(10)
     return StackTraceResponse:new(request.body.seq, request.body.seq, true,stackFrames)
   elseif request.body.command == "source" then
-    print_nicely(request.body.arguments.source)
+    -- TODO
   elseif request.body.command == "scopes" then
     local localScope = Scope:new("Locals", 1, false, "locals")
   -- Create a ScopesResponse containing the local scope
     return ScopesResponse:new(request.body.seq, request.body.seq, true, "scopes", true, { localScope })
   elseif request.body.command == "variables" then
     --TODO
-    local reference = request.body.arguments.reference;
-    print("var ref:" .. reference)
+    --local reference = request.body.arguments.reference;
+    --print("var ref:" .. reference)
 
-    print_nicely(request.body.arguments)
+    --print_nicely(request.body.arguments)
+  elseif request.body.command == "next" then
+    -- reset the breakpoint.
+    -- set the next flag and wait for the next line event.
+    dap_client.hitBreakpoint = false;
+    dap_client.next = true;
   end
 end
 function LuadapClient:getFile()
   return debug.getinfo(2, "S").source:sub(2)
 end
 function LuadapClient:getModule()
-  return debug.getinfo(2, "S").source:sub(2):match("([^/\\]+)%.lua$")
+  local src = debug.getinfo(3, "S").source
+  if src:sub(1, 1) == "@" then
+    return src:sub(2):match("([^/\\]+)%.lua$")
+  else
+    return "[C]"
+  end
 end
 function LuadapClient:traceback()
   local level = 1
@@ -1826,6 +1854,7 @@ end
 function Luadap.debughook(event, line)
 -- debuging ourselves is not allowed here!
 
+  -- we need to ensure the debug addapter configuration is complete before we start the code.
   while not dap_client.configurationDone do
     dap_client:debugLoop(event, line)
   end
@@ -1835,16 +1864,22 @@ function Luadap.debughook(event, line)
   elseif event == "return" or event == "tail return" then
     dap_client.stackLevel = dap_client.stackLevel - 1
   end
-
   local info = debug.getinfo(dap_client.stackLevel + 4, "Snl")
-  if dap_client.stackLevel >= -1 and info ~= nil and info.currentline ~= -1 then
+  local module = dap_client:getModule();
+  if dap_client.stackLevel >= -1 and info ~= nil and info.currentline ~= -1 and module ~= "[C]" then
     if event == "line" and not dap_client.first_line_event and not info.short_src:match("luadap.lua$") then 
       -- we need to send a breakpoint event here.
       --send the stopped event
       dap_client.first_line_event = true
       dap_client.hitBreakpoint = true
-
       dap_client:sendPackage(StoppedEvent:new(0,"entry",1,true))
+    elseif (event == "line" or event == "call") and dap_client.next == true and info ~= nil then
+      -- only lua code should be halted on.
+      
+      dap_client.hitBreakpoint = true;
+      dap_client.next = false;
+      dap_client:sendPackage(NextResponse:new(0, 1, true))
+      dap_client:sendPackage(StoppedEvent:new(0, "step", 1, true))
     end
   elseif event == "line" and dap_client.stackLevel >= -1 then
     print("executing line:" .. line .. " level:" .. dap_client.stackLevel)
