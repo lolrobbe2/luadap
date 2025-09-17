@@ -900,6 +900,7 @@ function LuadapClient:fromClientSocket(client)
     self.variables = {}
     self.children = {}
     self.next = false;
+    self.scopeCount = 0;
     return self
 end
 function LuadapClient:connect(host, port)
@@ -1827,6 +1828,7 @@ function LuadapClient:handleRequest(request)
     -- TODO
   elseif request.body.command == "scopes" then
     local stackFrames = dap_client:getStackFrames(10)
+    dap_client.scopeCount = 0;
     local scopes = {}
     for _, stackFrame in ipairs(stackFrames) do
       -- Each frame gets its own scope with a unique variablesReference
@@ -1837,21 +1839,26 @@ function LuadapClient:handleRequest(request)
         "locals"     -- scope type
       )
       table.insert(scopes, scope)
+      dap_client.scopeCount = dap_client.scopeCount + 1
     end
   -- Create a ScopesResponse containing the local scope
     return ScopesResponse:new(request.body.seq, request.body.seq, true, "scopes", true, scopes)
   elseif request.body.command == "variables" then
     --TODO
     print_nicely(request.body.arguments)
-    if not self.children[request.body.arguments.variablesReference] then
-      if request.body.arguments.variablesReference == 1 then
+  
+      if request.body.arguments.variablesReference <= self.scopeCount + 1 then
         print("hello")
-        self:indexLocals()
+        print("frame:" .. request.body.arguments.variablesReference)
+        local locals = self:getLocalsForFrame(request.body.arguments.variablesReference)
+        return VariablesResponse:new(request.body.seq, request.body.seq, true, "Variables",
+          locals)
       else
         -- get the children
+        return VariablesResponse:new(request.body.seq, request.body.seq, true, "Variables",
+          self.children[request.body.arguments.variablesReference])
       end
-      return VariablesResponse:new(request.body.seq, request.body.seq, true, "Variables", self.children[request.body.arguments.variablesReference])
-    end
+    
     --local reference = request.body.arguments.reference;
     --print("var ref:" .. reference)
 
@@ -1891,28 +1898,40 @@ end
 --[[
   This function indexes all the local variables when a breakpoint has been hit
 ]]
-function LuadapClient:indexLocals()
-  local level = self.stackLevel + 1
-  local index = 2 -- variablesReference: 1 is reserved as the root.
-  local rootVariables = {}
-  local stackFrames = self:getStackFrames(10)
-  for i,stackframe in ipairs(stackFrames) do
-    while true do
-      -- Retrieve the name and value of the local variable
-      local name, value = debug.getlocal(stackframe.id + 6, index - 1)
-      if not name then
-        print("no name")
-        break; -- Exit when there are no more locals
-      end
-      -- Store the local variable in a table
-      self.variables[index] = Variable:new(name, tostring(value), index, self:getPresentationHint(value), name, 0, 0)
-      rootVariables[index]  = self.variables[index]
-      self.children[1]      = rootVariables
-      index                 = index + 1
-      self.variablesCount   = self.variablesCount + 1
+function LuadapClient:getLocalsForFrame(frameId)
+  local locals = {}
+  local baseLevel = frameId + 4 -- match your stack offset
+  local index = 1
+
+  while true do
+    print("hello where are you");
+    local name, value = debug.getlocal(baseLevel, index)
+    if not name then
+      print("no name")
+      break;  -- Exit when there are no more locals
     end
+    print("i am here");
+    -- Skip internal variables if needed
+    if name ~= "(*temporary)" then
+      
+      local varRef = self.variablesCount + 1
+      self.variables[varRef] = Variable:new(
+        name,
+        tostring(value),
+        varRef,
+        self:getPresentationHint(value),
+        name,
+        0,
+        0
+      )
+      locals[varRef] = self.variables[varRef]
+      self.variablesCount = varRef
+    end
+
+    index = index + 1
   end
 
+  return locals
 end
 function Luadap.debughook(event, line)
 -- debuging ourselves is not allowed here!
