@@ -1461,24 +1461,25 @@ end
 StackFrame = {}
 StackFrame.__index = StackFrame
 
-function StackFrame:new(id, name, source, line)
+function StackFrame:new(id, name, source, line, column)
   local instance = setmetatable({}, StackFrame)
   instance.id = id
   instance.name = name or "[anonymous]"
   instance.source = source or Source:new()
   instance.line = line or 0
+  instance.column = column or 1
   return instance
 end
 
 function StackFrame:display()
-  print(string.format("Frame ID: %d | Name: %s | Source: %s | Line: %d",
+  print(string.format("Frame ID: %d | Name: %s | Source: %s | Line: %d | Column: %d",
     self.id,
     self.name,
     self.source.path,
-    self.line
+    self.line,
+    self.column
   ))
 end
-
 VariablePresentationHint = {}
 VariablePresentationHint.__index = VariablePresentationHint
 

@@ -46,3 +46,4 @@ external/obj/**
 /external/external/luasocket/luasocket.vcxproj.user
 *.vcxproj
 *.user
+/.idea
