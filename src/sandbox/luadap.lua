@@ -1430,6 +1430,7 @@ function Source:new(name, path)
   local instance = setmetatable({}, Source)
   instance.name = name or nil -- Optional name
   instance.path = path or nil -- Optional path
+  instance.sourceReference = 0 -- specify 0 so the client reads the file.
   return instance
 end
 
@@ -1469,6 +1470,7 @@ function StackFrame:new(id, name, source, line, column)
   instance.source = source or Source:new()
   instance.line = line or 0
   instance.column = column or 1
+  instance.column = 0
   return instance
 end
 
@@ -1663,23 +1665,35 @@ function ScopesResponse:display()
 end
 
 local function makeAbsolutePath(path)
+  -- Normalize slashes
+  path = path:gsub("\\", "/")
+
   -- If the path is already absolute, return it
   if path:match("^/") or path:match("^[a-zA-Z]:") then
-    return path:gsub("\\", "/") -- Normalize slashes
+    return path
   end
 
   -- Get the current working directory
-  local cwd = nil
+  local cwd
   if not dap_client.sessionInfo.cwd then
-    local handle = io.popen("cd")                        -- Works on both Windows & Linux
+    local handle = io.popen("cd") -- Works on both Windows & Linux
     cwd = handle:read("*a"):gsub("\n", ""):gsub("\\", "/") -- Normalize slashes
     handle:close()
   else
     cwd = dap_client.sessionInfo.cwd
   end
- 
 
-  return cwd .. "/" .. path:gsub("\\", "/") -- Ensure slashes are forward
+  -- Resolve ./ and ../ in the path
+  local parts = {}
+  for part in (cwd .. "/" .. path):gmatch("[^/]+") do
+    if part == ".." then
+      table.remove(parts) -- Go up one directory
+    elseif part ~= "." then
+      table.insert(parts, part)
+    end
+  end
+
+  return "/" .. table.concat(parts, "/")
 end
 
 function LuadapClient:getStackFrames(maxLevels, offset)
@@ -1693,18 +1707,18 @@ function LuadapClient:getStackFrames(maxLevels, offset)
     -- Correct the path
     local correctedPath = info.short_src and info.short_src:gsub("\\", "/") or "[unknown]"
     correctedPath = makeAbsolutePath(correctedPath)
-
+    local osCorrectedPath = correctedPath:gsub("/C:","C:",1):gsub("/", "\\")
     -- Create a Source object with the corrected path and name
     local source = Source:new(
       correctedPath:match("[^/\\]+$") or "[unknown]", -- Extract name from path
-      correctedPath -- Corrected path
+      osCorrectedPath -- Corrected path
     )
     -- Create a StackFrame object for each level
     local stackFrame = StackFrame:new(
-      level,                                     -- id
-      info.name or source.name or "[anonymous]", -- name
-      source,                                    -- source
-      info.currentline or 0                      -- line
+      level + 1,                                    -- id
+      info.name or "[unknown]",               -- name
+      source, -- source
+      info.currentline or 0                     -- line
     )
 
     if stackFrame.source.name == "[C]" then
@@ -1743,6 +1757,27 @@ function StackTraceResponse:display()
   if self.body.totalFrames then
     print("Total Frames: " .. self.body.totalFrames)
   end
+end
+
+-- Extend Response to create VariablesResponse
+VariablesResponse = setmetatable({}, { __index = Response })
+VariablesResponse.__index = VariablesResponse
+
+function VariablesResponse:new(seq, request_seq, success, message, variables)
+    -- Ensure variables is always an array table
+    local variablesArray = {}
+    if type(variables) == "table" then
+        for _, v in pairs(variables) do
+            table.insert(variablesArray, v) -- Insert preserving all indices
+        end
+    else
+        table.insert(variablesArray, variables) -- Wrap single variable in table
+    end
+    
+    local instance = Response.new(self, seq, request_seq, success, "variables", message, { variables = variablesArray })
+    return instance
+end
+
 end
 
 -- Derived class NextResponse inheriting from Response
@@ -1795,6 +1830,16 @@ function LuadapClient:handleRequest(request)
     return ScopesResponse:new(request.body.seq, request.body.seq, true, "scopes", true, { localScope })
   elseif request.body.command == "variables" then
     --TODO
+    print_nicely(request.body.arguments)
+    if not self.children[request.body.arguments.variablesReference] then
+      if request.body.arguments.variablesReference == 1 then
+        print("hello")
+        self:indexLocals()
+      else
+        -- get the children
+      end
+      return VariablesResponse:new(request.body.seq, request.body.seq, true, "Variables", self.children[request.body.arguments.variablesReference])
+    end
     --local reference = request.body.arguments.reference;
     --print("var ref:" .. reference)
 
@@ -1837,15 +1882,18 @@ end
 function LuadapClient:indexLocals()
   local level = self.stackLevel
   local index = 2 -- variablesReference: 1 is reserved as the root.
+  local rootVariables = {}
   while true do
     -- Retrieve the name and value of the local variable
-    local name, value = debug.getlocal(level + 5, index - 1)
+    local name, value = debug.getlocal(level + 7, index - 1)
     if not name then 
       print(name)
-      break;
-    end                   -- Exit when there are no more locals
+      break; -- Exit when there are no more locals
+    end                   
     -- Store the local variable in a table
     self.variables[index] = Variable:new(name,tostring(value),index,self:getPresentationHint(value),name,0,0)
+    rootVariables[index] = self.variables[index]
+    self.children[1] = rootVariables
     index = index + 1
     self.variablesCount  = self.variablesCount + 1
   end
