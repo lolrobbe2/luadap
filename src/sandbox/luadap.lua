@@ -1778,7 +1778,7 @@ function VariablesResponse:new(seq, request_seq, success, message, variables)
     return instance
 end
 
-end
+
 
 -- Derived class NextResponse inheriting from Response
 NextResponse = setmetatable({}, { __index = Response })

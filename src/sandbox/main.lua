@@ -10,7 +10,7 @@ luadap.start()
 function fibonacci()
     local a, b = 0, 1
     while true do
-        print(a)
+        print("fib:" .. a)
         a, b = b, a + b
     end
 end
