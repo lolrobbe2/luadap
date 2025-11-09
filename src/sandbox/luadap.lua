@@ -901,7 +901,10 @@ function LuadapClient:fromClientSocket(client)
     self.variables = {}
     self.variablestranslation = {}
     self.children = {}
-    self.next = false;
+    self.next = false
+    self.nextStackLevelFirst = true -- first time the offset is different due to entry event.
+    self.nextStackLevel = 0 --stack level should be the same for next/step over
+    self.stepIn = false
     self.scopeOffset = 0;
     self.breakPoints = {} --breakPoints ars stored per source for quicker access
     self.breakPointsCount = 0 -- count of breakpoints
@@ -1050,7 +1053,8 @@ function LuadapClient:sendPackage(package)
   if self.client then
     local json_data = json.encode(package)
     local content_length = #json_data
-    --print(json_data)
+    --DEBUG PRINT
+    print(json_data)
     -- Create the header with Content-Length
     local header = "Content-Length: " .. content_length .. "\r\n\r\n"
 
@@ -1066,7 +1070,8 @@ function LuadapClient:sendPackage(package)
       print("Error sending data:", err)
       return nil
     end
-    --print("Package sent successfully")
+    --DEBUG PRINT
+    print("Package sent successfully")
   else
     print("No client connected")
   end
@@ -1267,6 +1272,18 @@ function StoppedEvent:new(seq, reason, threadId, allThreadsStopped, hitBreakpoin
     })
     return instance
 end
+
+ContinuedEvent = setmetatable({}, { __index = Event })
+ContinuedEvent.__index = StoppedEvent
+
+function ContinuedEvent:new(seq, reason, threadId, allThreadsContinued, hitBreakpointIds)
+  local instance = Event.new(self, seq, 'continued', {
+    threadId = threadId,
+    allThreadsContinued = allThreadsContinued,
+  })
+  return instance
+end
+
 -- Derived class Response inheriting from ProtocolMessage
 Response = setmetatable({}, { __index = ProtocolMessage })
 Response.__index = Response
@@ -1786,7 +1803,18 @@ end
 
 function NextResponse:display()
   Response.display(self)
-  -- Add any NextResponse-specific display logic here if needed
+end
+
+-- Derived class NextResponse inheriting from Response
+StepInResponse = setmetatable({}, { __index = Response })
+StepInResponse.__index = StepInResponse
+
+function StepInResponse:new(seq, request_seq, success, message, body)
+  return Response.new(self, seq, request_seq, success, "stepIn", message, body)
+end
+
+function StepInResponse:display()
+  Response.display(self)
 end
 
 -- Derived class EvaluateResponse inheriting from Response
@@ -1949,6 +1977,24 @@ function LuadapClient:handleRequest(request)
     dap_client.scopeOffset = 0
     dap_client.variablestranslation = {}
     dap_client.next = true;
+    if dap_client.nextStackLevelFirst == true then
+      dap_client.nextStackLevelFirst = false;
+      dap_client.nextStackLevel = dap_client.stackLevel - 1;
+    else
+      dap_client.nextStackLevel = dap_client.stackLevel;
+    end
+    print("nextStackLevel set to ", dap_client.nextStackLevel)
+    return ContinuedEvent:new(request.body.seq, "next", 1, true)
+  -- stepIn =================================================
+  elseif request.body.command == "stepIn" then
+    -- reset the breakpoint.
+    -- set the stepIn flag and wait for the next call event.
+    dap_client.hitBreakpoint = false
+    dap_client.variablesCount = 0
+    dap_client.variables = {};
+    dap_client.scopeOffset = 0
+    dap_client.variablestranslation = {}
+    dap_client.stepIn = true;
   -- evaluate =================================================
   elseif request.body.command == "evaluate" and request.body.arguments.context == "hover" then
     print_nicely(request.body.arguments)
@@ -1977,6 +2023,7 @@ function LuadapClient:handleRequest(request)
   elseif request.body.command == "continue" then
     self.hitBreakpoint = false
     self.next = false
+    self.stepIn = false
     return ContinueResponse:new(request.body.seq, request.body.seq, true)
   end
 end
@@ -2096,8 +2143,8 @@ end
 
 function LuadapClient:indexBreakpoints(source, breakpoints)
   local bps = {}
-  self.breakPointsCount = self.breakPointsCount  + 1
   for _,bp in ipairs(breakpoints) do
+    self.breakPointsCount = self.breakPointsCount + 1
     table.insert(bps, { line = bp.line, message = bp.logMessage, verified = true, id = self.breakPointsCount } )
   end
   self.breakPoints[source.name] = bps
@@ -2110,7 +2157,7 @@ function Luadap.debughook(event, line)
   while not dap_client.configurationDone do
     dap_client:debugLoop(event, line)
   end
-  
+
   if event == "call" then
     dap_client.stackLevel = dap_client.stackLevel + 1
   elseif event == "return" or event == "tail return" then
@@ -2122,37 +2169,50 @@ function Luadap.debughook(event, line)
   local module = dap_client:getModule();
   local moduleName = dap_client:getModuleName();
   if dap_client.stackLevel >= -1 and info ~= nil and info.currentline ~= -1 and module ~= "[C]" then
-    if event == "line" and not dap_client.first_line_event and not info.short_src:match("luadap.lua$") then 
+    if event == "line" and not dap_client.first_line_event and not info.short_src:match("luadap.lua$") and module == "luadap" then
       -- we need to send a breakpoint event here.
       --send the stopped event
+      print("line:" .. line)
       dap_client.first_line_event = true
       dap_client.hitBreakpoint = true
       dap_client:sendPackage(StoppedEvent:new(0,"entry",1,true))
     end
   end
-    if (event == "line" or event == "call") and current ~= nil then
-      -- only lua code should be halted on.
-      if dap_client.next == true and module ~= "[C]" then
+  print("Debug Hook Event: " .. event .. " | Line: " .. tostring(line) .. " | Stack Level: " .. dap_client.stackLevel .. " | Module: " .. module .. " | Module Name: " .. moduleName)
+  if (event == "line" or event == "call") and current ~= nil and dap_client.first_line_event == true then
+    -- only lua code should be halted on.
+    if dap_client.next == true and module ~= "[C]" and event == "line" and dap_client.stackLevel == dap_client.nextStackLevel then
+      --stackLevel should be the same.
+      dap_client.hitBreakpoint = true;
+      dap_client.next = false;
+      dap_client:sendPackage(NextResponse:new(0, 1, true))
+      dap_client:sendPackage(StoppedEvent:new(0, "step", 1, true))
+    elseif dap_client.stepIn == true and module ~= "[C]" then
+        --stackLevel should be the same or increase 
         dap_client.hitBreakpoint = true;
-        dap_client.next = false;
-        dap_client:sendPackage(NextResponse:new(0, 1, true))
+        dap_client.stepIn = false;
+        dap_client:sendPackage(StepInResponse:new(0, 1, true))
         dap_client:sendPackage(StoppedEvent:new(0, "step", 1, true))
-      elseif dap_client.breakPoints[moduleName] ~= nil then
-        for _,bp in ipairs(dap_client.breakPoints[moduleName]) do
-          if bp.line == current.currentline then
-            dap_client.hitBreakpoint = true
-            if bp.message ~= nil then
-              dap_client:sendPackage(StoppedEvent:new(0, "breakpoint", 1, true, { bp.id }))
-            else
-              dap_client:sendPackage(StoppedEvent:new(0, "breakpoint", 1, true, {bp.id}))
-            end
-            break;
+    elseif dap_client.breakPoints[moduleName] ~= nil then
+      print("checking breakpoints for module:" .. moduleName)
+      for _,bp in ipairs(dap_client.breakPoints[moduleName]) do
+        print_nicely(bp)
+        print("breakpoint line:" .. bp.line .. " current line:" .. info.currentline)
+        if bp.line == line then
+          dap_client.hitBreakpoint = true
+          if bp.message ~= nil then
+            dap_client:sendPackage(StoppedEvent:new(0, "breakpoint", 1, true, { bp.id }))
+          else
+            dap_client:sendPackage(StoppedEvent:new(0, "breakpoint", 1, true, {bp.id}))
           end
+          break;
         end
       end
+    end
 
   elseif event == "line" and dap_client.stackLevel >= -1 then
-    --print("executing line:" .. line .. " level:" .. dap_client.stackLevel)
+    --DEBUG PRINT
+    print("executing line:" .. line .. " level:" .. dap_client.stackLevel)
   end
 
   while dap_client.hitBreakpoint do

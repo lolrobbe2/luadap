@@ -1,4 +1,4 @@
-local luadap = require("luadap_release")
+local luadap = require("luadap")
 
 -- Start the Luadap server
 
@@ -14,5 +14,9 @@ function fibonacci()
     end
 end
 
+function print_hello()
+    print("Hello, World!")
+end
 -- Start the endless Fibonacci sequence
+print_hello()
 fibonacci()
