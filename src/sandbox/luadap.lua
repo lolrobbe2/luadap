@@ -899,6 +899,7 @@ function LuadapClient:fromClientSocket(client)
     self.variablesCount = 0
     self.seenFrames = {}
     self.variables = {}
+    self.watch = {}
     self.variablestranslation = {}
     self.children = {}
     self.next = false
@@ -1102,7 +1103,6 @@ function LuadapClient:handleInitRequest(request)
       supportsConfigurationDoneRequest = true,
       supportsEvaluateForHovers = true,
       supportsLogPoints = true,
-      supportsEvaluateRequest = true,
     }
     return InitializeResponse:new(request.body.seq, request.body.seq, true, "", capabilities)
   end
@@ -2015,7 +2015,6 @@ function LuadapClient:handleRequest(request)
       return EvaluateResponse:new(request.body.seq, request.body.seq, false, request.body.arguments.expression, -1,"undefined")
     end
   elseif request.body.command == "evaluate" and request.body.arguments.context == "repl" then
-    print_nicely(request.body.arguments)
     local safe_globals = {
       -- Core Lua functions
       assert = assert,
@@ -2059,7 +2058,13 @@ function LuadapClient:handleRequest(request)
     else
       return EvaluateResponse:new(request.body.seq, request.body.seq, false, request.body.arguments.expression, -1,"undefined")
     end
-    
+  elseif request.body.command == "evaluate" and request.body.arguments.context == "watch" then
+    local error = {
+      id = 1001, -- Custom error code
+      format = "Watch expressions are not supported by this adapter.",
+      showUser = true
+    }
+    return ErrorResponse:new(request.body.seq, request.body.seq,false,"evaluate","not supported",error)
   -- setBreakpoints =================================================
   elseif request.body.command == "setBreakpoints" then
     --print_nicely(request.body.arguments)

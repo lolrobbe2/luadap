@@ -10,7 +10,7 @@ int luaopen_socket_core(lua_State* L);  // Declare the LuaSocket open function
 // Error handling function
 void report_errors(lua_State* L, int status) {
     if (status != LUA_OK) {
-        lua_getglobal(L, "debug");
+        lua_getglobal(L, "debug");  
         lua_getfield(L, -1, "traceback");
         lua_pushvalue(L, 1);
         lua_pushinteger(L, 2);
