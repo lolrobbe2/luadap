@@ -1,4 +1,4 @@
-local luadap = require("luadap")
+local luadap = require("luadap_release")
 
 -- Start the Luadap server
 
