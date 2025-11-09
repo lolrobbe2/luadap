@@ -897,10 +897,14 @@ function LuadapClient:fromClientSocket(client)
     self.hasStartReturned = false
     self.stackLevel = 0
     self.variablesCount = 0
+    self.seenFrames = {}
     self.variables = {}
+    self.variablestranslation = {}
     self.children = {}
     self.next = false;
-    self.scopeCount = 0;
+    self.scopeOffset = 0;
+    self.breakPoints = {} --breakPoints ars stored per source for quicker access
+    self.breakPointsCount = 0 -- count of breakpoints
     return self
 end
 function LuadapClient:connect(host, port)
@@ -1092,6 +1096,8 @@ function LuadapClient:handleInitRequest(request)
     print_nicely(info_table)
     local capabilities = {
       supportsConfigurationDoneRequest = true,
+      supportsEvaluateForHovers = true,
+      supportsLogPoints = true,
     }
     return InitializeResponse:new(request.body.seq, request.body.seq, true, "", capabilities)
   end
@@ -1509,8 +1515,7 @@ Variable = {}
 Variable.__index = Variable
 
 -- Constructor for Variable
-function Variable:new(name, value, variablesReference, presentationHint, evaluateName, namedVariables,
-                      indexedVariables)
+function Variable:new(name, value, variablesReference, presentationHint, evaluateName)
   local instance = setmetatable({}, self)
   instance.name = name or ""
   instance.value = value or ""
@@ -1538,7 +1543,6 @@ function Variable:new(name, value, variablesReference, presentationHint, evaluat
   ]]
   instance.presentationHint = presentationHint
   instance.evaluateName = evaluateName
-
   if type(value) == "table" then
     instance.indexedVariables = #value     -- Fast and efficient way to count array-like elements
 
@@ -1551,10 +1555,12 @@ function Variable:new(name, value, variablesReference, presentationHint, evaluat
     end
     instance.namedVariables = namedCount > 0 and namedCount or nil
   else
-    instance.namedVariables = nil
-    instance.indexedVariables = nil
+    instance.namedVariables = 0
+    instance.indexedVariables = 0
   end 
-
+  if presentationHint.kind == "property" then 
+    instance.variablesReference = 0
+  end
   -- Store value in the metatable
   local mt = getmetatable(instance) or {}
   mt.value = value or ""
@@ -1723,7 +1729,6 @@ function LuadapClient:getStackFrames(maxLevels, offset)
     )
 
     if stackFrame.source.name == "[C]" then
-      print("oops")
       return nil
     else if stackFrame.currentline ~= -1 and stackFrame.source.name ~= "luadap.lua" then
       table.insert(stackFrames, 1, stackFrame)
@@ -1767,16 +1772,7 @@ VariablesResponse.__index = VariablesResponse
 
 function VariablesResponse:new(seq, request_seq, success, message, variables)
     -- Ensure variables is always an array table
-    local variablesArray = {}
-    if type(variables) == "table" then
-        for _, v in pairs(variables) do
-            table.insert(variablesArray, v) -- Insert preserving all indices
-        end
-    else
-        table.insert(variablesArray, variables) -- Wrap single variable in table
-    end
-    
-    local instance = Response.new(self, seq, request_seq, success, "variables", message, { variables = variablesArray })
+    local instance = Response.new(self, seq, request_seq, success, "variables", message, { variables = variables })
     return instance
 end
 
@@ -1793,6 +1789,80 @@ end
 function NextResponse:display()
   Response.display(self)
   -- Add any NextResponse-specific display logic here if needed
+end
+
+-- Derived class EvaluateResponse inheriting from Response
+EvaluateResponse = setmetatable({}, { __index = Response })
+EvaluateResponse.__index = EvaluateResponse
+
+function EvaluateResponse:new(seq, request_seq, success, result, variablesReference, type_, presentationHint,
+                              namedVariables, indexedVariables, memoryReference, valueLocationReference)
+  local body = {
+    result = result,
+    variablesReference = variablesReference or 0,
+    type = type_ or nil,
+    presentationHint = presentationHint or nil,
+    namedVariables = namedVariables or nil,
+    indexedVariables = indexedVariables or nil,
+    memoryReference = memoryReference or nil,
+    valueLocationReference = valueLocationReference or nil
+  }
+
+  local instance = Response.new(self, seq, request_seq,success, "evaluate", nil, body)
+  return instance
+end
+
+function EvaluateResponse:display()
+  Response.display(self)
+  print("Result: " .. tostring(self.body.result))
+  print("Type: " .. tostring(self.body.type))
+  print("Variables Reference: " .. tostring(self.body.variablesReference))
+  print("Named Variables: " .. tostring(self.body.namedVariables))
+  print("Indexed Variables: " .. tostring(self.body.indexedVariables))
+  print("Memory Reference: " .. tostring(self.body.memoryReference))
+  print("Value Location Reference: " .. tostring(self.body.valueLocationReference))
+end
+
+SetBreakpointsResponse = setmetatable({}, { __index = Response })
+SetBreakpointsResponse.__index = SetBreakpointsResponse
+
+function SetBreakpointsResponse:new(seq, request_seq, success, breakpoints)
+  local body = {
+    breakpoints = breakpoints or {}
+  }
+
+  local instance = Response.new(self, seq, request_seq, success, "setBreakpoints", nil, body)
+  return instance
+end
+
+function SetBreakpointsResponse:display()
+  Response.display(self)
+  print("Breakpoints:")
+  for i, bp in ipairs(self.body.breakpoints) do
+    print(string.format("  [%d] verified: %s, line: %s, column: %s, source: %s",
+      i,
+      tostring(bp.verified),
+      tostring(bp.line),
+      tostring(bp.column),
+      bp.source and tostring(bp.source.path) or "nil"
+    ))
+  end
+end
+
+ContinueResponse = setmetatable({}, { __index = Response })
+ContinueResponse.__index = ContinueResponse
+
+function ContinueResponse:new(seq, request_seq, success, allThreadsContinued)
+  local body = {
+    allThreadsContinued = allThreadsContinued or true
+  }
+
+  return Response.new(self, seq, request_seq, success, "continue", nil, body)
+end
+
+function ContinueResponse:display()
+  Response.display(self)
+  print("All Threads Continued: " .. tostring(self.body.allThreadsContinued))
 end
 
 -- Display all stack frames
@@ -1816,58 +1886,102 @@ function LuadapClient:handleRequest(request)
     local mainRoutine = Thread:new(1, "Main Routine")
     dap_client.configurationDone = true
     return ThreadsResponse:new(request.body.seq, request.body.seq, true, { mainRoutine })
+  -- configurationDone =================================================
   elseif request.body.command == "configurationDone" then
-    -- TODO add implementation
     dap_client:settimeout(0)
     return ConfigurationDoneResponse:new(request.body.seq, request.body.seq, true)
+  -- stackTrace =================================================
   elseif request.body.command == "stackTrace" then
     -- TODO return stack trace
     local stackFrames = dap_client:getStackFrames(10)
     return StackTraceResponse:new(request.body.seq, request.body.seq, true,stackFrames)
   elseif request.body.command == "source" then
+    -- source =================================================
     -- TODO
   elseif request.body.command == "scopes" then
+    -- scopes =================================================
     local stackFrames = dap_client:getStackFrames(10)
-    dap_client.scopeCount = 0;
+    dap_client.scopeOffset = 0;
+    
     local scopes = {}
     for _, stackFrame in ipairs(stackFrames) do
       -- Each frame gets its own scope with a unique variablesReference
       local scope = Scope:new(
         stackFrame.name,    -- name
         stackFrame.id + 1, -- variablesReference (can be frame ID or a generated one)
-        true,       -- expensive
-        "locals"     -- scope type
+        false,       -- expensive
+        VariablePresentationHint:new("virtual", {}, nil, false) -- scope type
       )
       table.insert(scopes, scope)
-      dap_client.scopeCount = dap_client.scopeCount + 1
+      if stackFrame.id + 1 > dap_client.scopeOffset then
+        dap_client.scopeOffset = stackFrame.id + 1
+      end
     end
   -- Create a ScopesResponse containing the local scope
-    return ScopesResponse:new(request.body.seq, request.body.seq, true, "scopes", true, scopes)
+    return ScopesResponse:new(request.body.seq, request.body.seq, true, "scopes", false, scopes)
   elseif request.body.command == "variables" then
-    --TODO
-    print_nicely(request.body.arguments)
-  
-      if request.body.arguments.variablesReference <= self.scopeCount + 1 then
-        print("hello")
-        print("frame:" .. request.body.arguments.variablesReference)
+    -- variables =================================================    
+      if request.body.arguments.variablesReference <= self.scopeOffset then
         local locals = self:getLocalsForFrame(request.body.arguments.variablesReference)
         return VariablesResponse:new(request.body.seq, request.body.seq, true, "Variables",
           locals)
       else
-        -- get the children
+        local var = self.variables[request.body.arguments.variablesReference];
+        if var ~= nil then
+          local children = self.children[request.body.arguments.variablesReference]
+          if children == nil then
+            children = self:indexChildren(request.body.arguments.variablesReference)
+          end
+      
+          --child variables not indexed
+         
         return VariablesResponse:new(request.body.seq, request.body.seq, true, "Variables",
-          self.children[request.body.arguments.variablesReference])
+          children)
+        end
+        print("variable not found 404") -- should never be seen
       end
     
-    --local reference = request.body.arguments.reference;
-    --print("var ref:" .. reference)
-
-    --print_nicely(request.body.arguments)
+  -- next =================================================
   elseif request.body.command == "next" then
     -- reset the breakpoint.
     -- set the next flag and wait for the next line event.
-    dap_client.hitBreakpoint = false;
+    dap_client.hitBreakpoint = false
+    dap_client.variablesCount = 0
+    dap_client.variables = {};
+    dap_client.scopeOffset = 0
+    dap_client.variablestranslation = {}
     dap_client.next = true;
+  -- evaluate =================================================
+  elseif request.body.command == "evaluate" and request.body.arguments.context == "hover" then
+    print_nicely(request.body.arguments)
+    local varRef = self.variablestranslation[request.body.arguments.expression]
+    local var = self.variables[varRef]
+    if varRef then
+      print("ref: " .. varRef)
+      local hint = self:getPresentationHint(var)
+      print("hint: " .. hint.kind)
+      if hint.kind == "data" or hint.kind == "class" then
+        return EvaluateResponse:new(request.body.seq, request.body.seq, true, tostring(var),varRef)
+      elseif hint.kind == "method" then
+        --method
+        return EvaluateResponse:new(request.body.seq, request.body.seq, true, tostring(var))
+      else
+        return EvaluateResponse:new(request.body.seq, request.body.seq, true, tostring(var))
+      end
+    else 
+      return EvaluateResponse:new(request.body.seq, request.body.seq, false, request.body.arguments.expression, -1,"undefined")
+    end
+  -- setBreakpoints =================================================
+  elseif request.body.command == "setBreakpoints" then
+    print_nicely(request.body.arguments)
+    print_nicely(request.body.arguments.source)
+
+    local breakpoints = self:indexBreakpoints(request.body.arguments.source, request.body.arguments.breakpoints)
+    return SetBreakpointsResponse:new(request.body.seq, request.body.seq, true, breakpoints)
+  elseif request.body.command == "continue" then
+    self.hitBreakpoint = false
+    self.next = false
+    return ContinueResponse:new(request.body.seq, request.body.seq, true)
   end
 end
 function LuadapClient:getFile()
@@ -1881,6 +1995,16 @@ function LuadapClient:getModule()
     return "[C]"
   end
 end
+
+function LuadapClient:getModuleName()
+  local src = debug.getinfo(3, "S").source
+  if src:sub(1, 1) == "@" then
+    return src:sub(2):match("([^/\\]+%.lua)$")
+  else
+    return "[C]"
+  end
+end
+
 function LuadapClient:traceback()
   local level = 1
   while true do
@@ -1904,34 +2028,86 @@ function LuadapClient:getLocalsForFrame(frameId)
   local index = 1
 
   while true do
-    print("hello where are you");
     local name, value = debug.getlocal(baseLevel, index)
     if not name then
-      print("no name")
       break;  -- Exit when there are no more locals
     end
-    print("i am here");
     -- Skip internal variables if needed
     if name ~= "(*temporary)" then
-      
-      local varRef = self.variablesCount + 1
-      self.variables[varRef] = Variable:new(
+      local varRef = self.variablesCount + self.scopeOffset + 1
+      local hint = self:getPresentationHint(value)
+      local usedVarRef = 0
+      print("hint kind:" .. hint.kind)
+      if hint.kind == "data" or hint.kind == "class" then
+        usedVarRef = varRef
+      end
+
+      self.variables[varRef] = value
+      local var = Variable:new(
         name,
         tostring(value),
-        varRef,
+        usedVarRef,
         self:getPresentationHint(value),
-        name,
-        0,
-        0
+        name
       )
-      locals[varRef] = self.variables[varRef]
-      self.variablesCount = varRef
+      table.insert(locals, var)
+      self.variablestranslation[name] = varRef
+      self.variablesCount = self.variablesCount + 1;
     end
 
     index = index + 1
   end
 
   return locals
+end
+
+function LuadapClient:indexChildren(variablesReference)
+
+  if variablesReference == 0 then
+    return {}
+  end
+  local children = {}
+  
+  local value = self.variables[variablesReference]
+  if value ~= nil then
+    print("hello me not nil")
+    for key, child in pairs(value) do
+      local varRef = self.variablesCount + self.scopeOffset + 1
+      local hint = self:getPresentationHint(child)
+      local usedVarRef = 0
+
+      if hint.kind == "data" or hint.kind == "class" then
+        usedVarRef = varRef
+      end
+      if tonumber(key) then
+        --indexable
+        local variable = Variable:new(tostring(key),tostring(child),usedVarRef,hint)
+        table.insert(children,variable)
+        self.variables[varRef] = child
+        self.variablesCount = self.variablesCount + 1;
+      elseif key then
+        -- key value pair
+        local variable = Variable:new(tostring(key), tostring(child), usedVarRef, hint)
+        table.insert(children, variable)
+        self.variables[varRef] = child
+        self.variablesCount = self.variablesCount + 1;
+      else
+        print("oops")
+      end
+    end
+  end
+  self.children[variablesReference] = children
+  return children
+end
+
+function LuadapClient:indexBreakpoints(source, breakpoints)
+  local bps = {}
+  self.breakPointsCount = self.breakPointsCount  + 1
+  for _,bp in ipairs(breakpoints) do
+    table.insert(bps, { line = bp.line, message = bp.logMessage, verified = true, id = self.breakPointsCount } )
+  end
+  self.breakPoints[source.name] = bps
+  return bps
 end
 function Luadap.debughook(event, line)
 -- debuging ourselves is not allowed here!
@@ -1947,7 +2123,11 @@ function Luadap.debughook(event, line)
     dap_client.stackLevel = dap_client.stackLevel - 1
   end
   local info = debug.getinfo(dap_client.stackLevel + 4, "Snl")
+  local current = debug.getinfo(dap_client.stackLevel + 3, "Snl")
+
   local module = dap_client:getModule();
+  local moduleName = dap_client:getModuleName();
+  print("module:" .. moduleName)
   if dap_client.stackLevel >= -1 and info ~= nil and info.currentline ~= -1 and module ~= "[C]" then
     if event == "line" and not dap_client.first_line_event and not info.short_src:match("luadap.lua$") then 
       -- we need to send a breakpoint event here.
@@ -1955,14 +2135,31 @@ function Luadap.debughook(event, line)
       dap_client.first_line_event = true
       dap_client.hitBreakpoint = true
       dap_client:sendPackage(StoppedEvent:new(0,"entry",1,true))
-    elseif (event == "line" or event == "call") and dap_client.next == true and info ~= nil then
-      -- only lua code should be halted on.
-      
-      dap_client.hitBreakpoint = true;
-      dap_client.next = false;
-      dap_client:sendPackage(NextResponse:new(0, 1, true))
-      dap_client:sendPackage(StoppedEvent:new(0, "step", 1, true))
     end
+  end
+    if (event == "line" or event == "call") and current ~= nil then
+      -- only lua code should be halted on.
+      if dap_client.next == true and module ~= "[C]" then
+        dap_client.hitBreakpoint = true;
+        dap_client.next = false;
+        dap_client:sendPackage(NextResponse:new(0, 1, true))
+        dap_client:sendPackage(StoppedEvent:new(0, "step", 1, true))
+      elseif dap_client.breakPoints[moduleName] ~= nil then
+        for _,bp in ipairs(dap_client.breakPoints[moduleName]) do
+          print("checking breakpoint:" .. bp.line .. " currentline:" .. current.currentline)
+          if bp.line == current.currentline then
+            dap_client.hitBreakpoint = true
+            if bp.message ~= nil then
+              print("logpoint:" .. bp.message)
+              dap_client:sendPackage(StoppedEvent:new(0, "breakpoint", 1, true, { bp.id }))
+            else
+              dap_client:sendPackage(StoppedEvent:new(0, "breakpoint", 1, true, {bp.id}))
+            end
+            break;
+          end
+        end
+      end
+
   elseif event == "line" and dap_client.stackLevel >= -1 then
     print("executing line:" .. line .. " level:" .. dap_client.stackLevel)
   end
