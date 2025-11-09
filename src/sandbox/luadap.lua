@@ -1995,6 +1995,7 @@ function LuadapClient:handleRequest(request)
     dap_client.scopeOffset = 0
     dap_client.variablestranslation = {}
     dap_client.stepIn = true;
+    return ContinuedEvent:new(request.body.seq, "next", 1, true)
   -- evaluate =================================================
   elseif request.body.command == "evaluate" and request.body.arguments.context == "hover" then
     print_nicely(request.body.arguments)
@@ -2181,27 +2182,26 @@ function Luadap.debughook(event, line)
   print("Debug Hook Event: " .. event .. " | Line: " .. tostring(line) .. " | Stack Level: " .. dap_client.stackLevel .. " | Module: " .. module .. " | Module Name: " .. moduleName)
   if (event == "line" or event == "call") and current ~= nil and dap_client.first_line_event == true then
     -- only lua code should be halted on.
-    if dap_client.next == true and module ~= "[C]" and event == "line" and dap_client.stackLevel == dap_client.nextStackLevel then
+    if dap_client.stepIn == true and module ~= "[C]" then
+      --stackLevel should be the same or increase 
+      dap_client.hitBreakpoint = true;
+      dap_client.stepIn = false;
+      dap_client:sendPackage(StepInResponse:new(0, 1, true))
+      dap_client:sendPackage(StoppedEvent:new(0, "step", 1, true))
+    elseif dap_client.next == true and module ~= "[C]" and event == "line" and dap_client.stackLevel == dap_client.nextStackLevel then
       --stackLevel should be the same.
+      print_nicely(info)
       dap_client.hitBreakpoint = true;
       dap_client.next = false;
       dap_client:sendPackage(NextResponse:new(0, 1, true))
       dap_client:sendPackage(StoppedEvent:new(0, "step", 1, true))
-    elseif dap_client.stepIn == true and module ~= "[C]" then
-        --stackLevel should be the same or increase 
-        dap_client.hitBreakpoint = true;
-        dap_client.stepIn = false;
-        dap_client:sendPackage(StepInResponse:new(0, 1, true))
-        dap_client:sendPackage(StoppedEvent:new(0, "step", 1, true))
     elseif dap_client.breakPoints[moduleName] ~= nil then
-      print("checking breakpoints for module:" .. moduleName)
       for _,bp in ipairs(dap_client.breakPoints[moduleName]) do
-        print_nicely(bp)
-        print("breakpoint line:" .. bp.line .. " current line:" .. info.currentline)
         if bp.line == line then
           dap_client.hitBreakpoint = true
           if bp.message ~= nil then
-            dap_client:sendPackage(StoppedEvent:new(0, "breakpoint", 1, true, { bp.id }))
+            --excution should not be stopped on logpoints
+            print(bp.message)
           else
             dap_client:sendPackage(StoppedEvent:new(0, "breakpoint", 1, true, {bp.id}))
           end
