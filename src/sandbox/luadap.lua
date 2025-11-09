@@ -1102,6 +1102,7 @@ function LuadapClient:handleInitRequest(request)
       supportsConfigurationDoneRequest = true,
       supportsEvaluateForHovers = true,
       supportsLogPoints = true,
+      supportsEvaluateRequest = true,
     }
     return InitializeResponse:new(request.body.seq, request.body.seq, true, "", capabilities)
   end
@@ -1983,7 +1984,6 @@ function LuadapClient:handleRequest(request)
     else
       dap_client.nextStackLevel = dap_client.stackLevel;
     end
-    print("nextStackLevel set to ", dap_client.nextStackLevel)
     return ContinuedEvent:new(request.body.seq, "next", 1, true)
   -- stepIn =================================================
   elseif request.body.command == "stepIn" then
@@ -1996,7 +1996,7 @@ function LuadapClient:handleRequest(request)
     dap_client.variablestranslation = {}
     dap_client.stepIn = true;
     return ContinuedEvent:new(request.body.seq, "next", 1, true)
-  -- evaluate =================================================
+  -- evaluate hover=================================================
   elseif request.body.command == "evaluate" and request.body.arguments.context == "hover" then
     print_nicely(request.body.arguments)
     local varRef = self.variablestranslation[request.body.arguments.expression]
@@ -2014,10 +2014,56 @@ function LuadapClient:handleRequest(request)
     else 
       return EvaluateResponse:new(request.body.seq, request.body.seq, false, request.body.arguments.expression, -1,"undefined")
     end
+  elseif request.body.command == "evaluate" and request.body.arguments.context == "repl" then
+    print_nicely(request.body.arguments)
+    local safe_globals = {
+      -- Core Lua functions
+      assert = assert,
+      error = error,
+      ipairs = ipairs,
+      next = next,
+      pairs = pairs,
+      pcall = pcall,
+      print = print,
+      select = select,
+      tonumber = tonumber,
+      tostring = tostring,
+      type = type,
+      unpack = table.unpack, -- Lua 5.1 vs 5.2+
+
+      -- Math library
+      math = math,
+
+      -- String library
+      string = string,
+
+      -- Table library
+      table = table,
+
+      -- Basic debug (optional, use with caution)
+      -- debug = debug,  -- Only if you trust the input
+    }
+    local env = setmetatable({}, { __index = safe_globals })
+    for varName in string.gmatch(request.body.arguments.expression, "[a-zA-Z_][a-zA-Z0-9_]*") do
+      local varRef = self.variablestranslation[varName]
+      local var = self.variables[varRef]
+      env[varName] = var
+    end
+
+    local f = load("return " .. request.body.arguments.expression, "eval", "t", env)
+    local success, result = pcall(f)
+
+    -- Handle result or error
+    if success then
+      return EvaluateResponse:new(request.body.seq, request.body.seq, true, tostring(result))
+    else
+      return EvaluateResponse:new(request.body.seq, request.body.seq, false, request.body.arguments.expression, -1,"undefined")
+    end
+    
   -- setBreakpoints =================================================
   elseif request.body.command == "setBreakpoints" then
-    print_nicely(request.body.arguments)
-    print_nicely(request.body.arguments.source)
+    --print_nicely(request.body.arguments)
+    --print_nicely(request.body.arguments.source)
 
     local breakpoints = self:indexBreakpoints(request.body.arguments.source, request.body.arguments.breakpoints)
     return SetBreakpointsResponse:new(request.body.seq, request.body.seq, true, breakpoints)
@@ -2173,13 +2219,11 @@ function Luadap.debughook(event, line)
     if event == "line" and not dap_client.first_line_event and not info.short_src:match("luadap.lua$") and module == "luadap" then
       -- we need to send a breakpoint event here.
       --send the stopped event
-      print("line:" .. line)
       dap_client.first_line_event = true
       dap_client.hitBreakpoint = true
       dap_client:sendPackage(StoppedEvent:new(0,"entry",1,true))
     end
   end
-  print("Debug Hook Event: " .. event .. " | Line: " .. tostring(line) .. " | Stack Level: " .. dap_client.stackLevel .. " | Module: " .. module .. " | Module Name: " .. moduleName)
   if (event == "line" or event == "call") and current ~= nil and dap_client.first_line_event == true then
     -- only lua code should be halted on.
     if dap_client.stepIn == true and module ~= "[C]" then
@@ -2195,14 +2239,16 @@ function Luadap.debughook(event, line)
       dap_client.next = false;
       dap_client:sendPackage(NextResponse:new(0, 1, true))
       dap_client:sendPackage(StoppedEvent:new(0, "step", 1, true))
-    elseif dap_client.breakPoints[moduleName] ~= nil then
+    end
+    if dap_client.breakPoints[moduleName] ~= nil then
       for _,bp in ipairs(dap_client.breakPoints[moduleName]) do
         if bp.line == line then
-          dap_client.hitBreakpoint = true
+          
           if bp.message ~= nil then
             --excution should not be stopped on logpoints
             print(bp.message)
-          else
+          elseif dap_client.hitBreakpoint == false then
+            dap_client.hitBreakpoint = true
             dap_client:sendPackage(StoppedEvent:new(0, "breakpoint", 1, true, {bp.id}))
           end
           break;

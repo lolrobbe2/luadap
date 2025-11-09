@@ -14,9 +14,6 @@ BEGIN {
     long_comment_end = ""     # regex for closing long comment
 }
 
-# Remove display() functions
-/^function[[:space:]]+[[:alnum:]_.:]*:display[[:space:]]*\(\)/,/^end[[:space:]]*$/ {next}
-
 # Remove print_nicely(...) calls (whole line)
 # Assumes one call per line, may have spaces before
 /^[[:space:]]*print_nicely[[:space:]]*\(.*\)[[:space:]]*$/ {next}
