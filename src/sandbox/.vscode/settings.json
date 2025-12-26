@@ -3,5 +3,16 @@
     "premake.action": "vs2022",
     "Lua.diagnostics.disable": [
         "duplicate-set-field"
+    ],
+    "Lua.workspace.library": [
+        "c:\\Users\\robbe\\source\\repos\\lolrobbe2\\premake-manager\\resources\\language\\workspace.lua",
+        "c:\\Users\\robbe\\source\\repos\\lolrobbe2\\premake-manager\\resources\\language\\globals.lua",
+        "c:\\Users\\robbe\\source\\repos\\lolrobbe2\\premake-manager\\resources\\language\\common.lua",
+        "c:\\Users\\robbe\\source\\repos\\lolrobbe2\\premake-manager\\resources\\language\\http.lua"
+    ],
+    "Lua.diagnostics.globals": [
+        "_ACTION",
+        "filter",
+        "http"
     ]
 }
